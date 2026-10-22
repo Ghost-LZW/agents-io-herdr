@@ -1,0 +1,7 @@
+#!/usr/bin/env node
+// agents-io-herdr launcher: Node 24 runs the TypeScript sources directly (type stripping), no build
+// step and no runtime dependencies. Symlinks to this file resolve to the real path first, so the
+// relative import below always finds src/. Run it from a clone (Node does not strip types under
+// node_modules).
+const { main } = await import("../src/main.ts");
+process.exitCode = await main(process.argv.slice(2));
