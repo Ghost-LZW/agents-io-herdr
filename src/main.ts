@@ -56,6 +56,12 @@ export interface Io {
 }
 
 export function realIo(): Io {
+  // A reader that stops early (`| head`) is not an error worth a stack trace.
+  for (const stream of [process.stdout, process.stderr]) {
+    stream.on("error", (e: NodeJS.ErrnoException) => {
+      if (e.code !== "EPIPE") throw e;
+    });
+  }
   return {
     env: process.env,
     home: process.env.HOME || homedir(),
@@ -264,7 +270,7 @@ async function oneShot(c: Config): Promise<AioClient> {
   client.start();
   if (!(await client.waitOnline(5000))) {
     client.stop();
-    throw new CliError(`the daemon is not answering on ${c.paths.socket} (agents-io-herdr status)`);
+    throw new CliError(`the daemon is not answering on ${c.paths.socket}`);
   }
   return client;
 }
@@ -324,7 +330,7 @@ async function status(io: Io, c: Config): Promise<number> {
     ["app secret", c.feishu.appSecret],
   ] as const) {
     const r = lookup(refs, io.secrets);
-    out(`${name}:${" ".repeat(11 - name.length)} ${r.ok ? `found (${r.from})` : `not found: ${r.reason}`}`);
+    out(`${name}:${" ".repeat(10 - name.length)} ${r.ok ? `found (${r.from})` : `not found: ${r.reason}`}`);
   }
   try {
     const client = await oneShot(c);
