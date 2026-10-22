@@ -1,0 +1,23 @@
+{
+  "machine": "my-mac",
+  "locale": "en",
+  "timeZone": "Europe/Berlin",
+  "aioRepo": "~/src/agents-io",
+  "feishu": {
+    "domain": "feishu",
+    "appId": ["env:AGENTS_IO_HERDR_APP_ID", "keychain:agents-io-herdr.app-id"],
+    "appSecret": ["env:AGENTS_IO_HERDR_APP_SECRET", "keychain:agents-io-herdr.app-secret"]
+  },
+  "notify": {
+    "blockedAfterSec": 60,
+    "doneMinTurnSec": 120,
+    "doneSettleSec": 30,
+    "presentIdleSec": 180,
+    "quiet": "23:00-08:00",
+    "quietBlocked": false
+  },
+  "workbench": {
+    "create": true,
+    "name": null
+  }
+}
