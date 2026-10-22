@@ -1,0 +1,7 @@
+node_modules/
+coverage/
+*.log
+.DS_Store
+# Local configuration and state never belong in the repository.
+config.json
+state.json
