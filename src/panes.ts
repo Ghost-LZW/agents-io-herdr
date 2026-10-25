@@ -3,10 +3,10 @@
  * one's screen, type into it, press keys. Parsing, naming panes and the cards are here; the bridge
  * does the I/O.
  *
- * - `ls` / `列表`: every pane, with a "view" button each;
- * - `看 <pane> [lines]` / `view`: the pane's screen (in a pane's topic: `/看 [lines]`);
- * - `发 <pane> <text>` / `send`: text and Enter (an agent: `agent.prompt`, refused while a dialog is open);
- * - `键 <pane> <key>…` / `keys`: key presses, herdr's names (`esc`, `enter`, `ctrl+c`, `up`, `1`; in a topic: `/键 …`).
+ * - `/ls`: every pane, with a "view" button each;
+ * - `/view <pane> [lines]`: the pane's screen (in a pane's topic: `/view [lines]`);
+ * - `/send <pane> <text>`: text and Enter (an agent: `agent.prompt`, refused while a dialog is open);
+ * - `/keys <pane> <key>…`: key presses, herdr's names (`esc`, `enter`, `ctrl+c`, `up`, `1`; in a topic: `/keys …`).
  *
  * A pane is named by its id (`w1:p2`), its short id (`p2`), its tab's label or its directory.
  */
@@ -25,17 +25,9 @@ export type PaneCommand =
 
 const WORDS: Record<string, "panes" | "view" | "send" | "keys"> = {
   ls: "panes",
-  panes: "panes",
-  列表: "panes",
   view: "view",
-  cat: "view",
-  screen: "view",
-  看: "view",
-  屏幕: "view",
   send: "send",
-  发: "send",
   keys: "keys",
-  键: "keys",
 };
 
 export const VIEW_LINES = 40;
@@ -46,13 +38,13 @@ const SCREEN_CHARS_MAX = 12_000;
 const VIEW_BUTTONS_MAX = 10;
 
 /**
- * A pane command, or null. In a pane's topic (or a reply to its notice) only `/看` and `/键` are
- * commands — everything else there is typed into the agent — and they act on that pane.
+ * A pane command (`/` and the word), or null. In a pane's topic (or a reply to its notice) only
+ * `/view` and `/keys` are commands, acting on that pane; everything else there, other slash
+ * commands too (the agent's own `/compact`, `/status`), is typed into the agent.
  */
 export function paneCommandOf(text: string, inThread: boolean): PaneCommand | null {
   const t = text.replace(/(^|\s)@\S+/g, "$1").trim();
-  if (inThread && !t.startsWith("/")) return null;
-  const m = /^\/?(\S+)(?:\s+([\s\S]*))?$/.exec(t);
+  const m = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(t);
   const cmd = m ? WORDS[(m[1] as string).toLowerCase()] : undefined;
   if (!m || !cmd) return null;
   const rest = (m[2] ?? "").trim();
@@ -163,7 +155,7 @@ export function panesMessage(o: {
   return { text: `${s.panesHead(o.machine, rows.length)}\n${lines.join("\n")}`, sections: [footer], actions };
 }
 
-/** `看`: one pane's screen, a refresh button, and a waiting dialog's choices when there are some. */
+/** `/view`: one pane's screen, a refresh button, and a waiting dialog's choices when there are some. */
 export function viewMessage(o: {
   machine: string;
   pane: HerdrAgent;

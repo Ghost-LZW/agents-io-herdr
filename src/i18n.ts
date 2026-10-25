@@ -101,9 +101,9 @@ const zh: Strings = {
   workbenchCreated: (name) =>
     `建好了工作台群「${name}」。agent 在等你或做完一段长活时会在那里告诉你，每个 agent 一个话题；在话题里回复就是对它说话。`,
   workbenchFailed: (reason) =>
-    `没能自动建群（${reason}）。可以把我拉进任意一个群，@我说「工作台」；在那之前通知发到这里。`,
+    `没能自动建群（${reason}）。可以把我拉进任意一个群，@我发 /workbench；在那之前通知发到这里。`,
   workbenchHello: (machine) =>
-    `这里是 ${machine} 的工作台。herdr 里的 agent 在等你或做完一段长活时，会在这里开一个话题告诉你；在话题里回复就是对它说话，卡住时点按钮就是按键。发「状态」看所有 agent。`,
+    `这里是 ${machine} 的工作台。herdr 里的 agent 在等你或做完一段长活时，会在这里开一个话题告诉你；在话题里回复就是对它说话，卡住时点按钮就是按键。发 /status 看所有 agent，/help 看所有命令。`,
   workbenchSet: "好的，这个群是工作台了。agent 的通知会发到这里，每个 agent 一个话题，在话题里回复就是对它说话。",
   workbenchSame: "这个群已经是工作台。",
   workbenchExists: "已经有工作台群了，通知都发在那里。",
@@ -123,16 +123,16 @@ const zh: Strings = {
       `**${machine} · 能做什么**`,
       "- 在 agent 的话题里回复（私聊里回复它的通知）：就是对它说话",
       "- 卡住时点按钮：就是在它的对话框里按那个键",
-      "- 「状态」：列出所有 agent",
-      "- 「列表」：列出所有 pane（包括普通终端），点按钮看屏幕",
-      "- 「看 <pane> [行数]」：看它现在的屏幕；回复那张卡片就是对那个 pane 说话",
-      "- 「发 <pane> <文字>」：输入文字并回车",
-      "- 「键 <pane> <键>…」：按键，如 esc、enter、ctrl+c、up、1",
-      "- 在 agent 的话题里：「/看」看屏幕，「/键 esc」按键",
-      "- 「工作台」：私聊里补建工作台群；在群里 @我说，就把那个群当工作台",
-      "- 「暂停」/「恢复」：停发、恢复通知",
+      "- /status：列出所有 agent",
+      "- /ls：列出所有 pane（包括普通终端），点按钮看屏幕",
+      "- /view <pane> [行数]：看它现在的屏幕；回复那张卡片就是对那个 pane 说话",
+      "- /send <pane> <文字>：输入文字并回车",
+      "- /keys <pane> <键>…：按键，如 esc、enter、ctrl+c、up、1",
+      "- 在 agent 的话题里：/view 看屏幕，/keys esc 按键；其他 / 命令照旧发给 agent",
+      "- /workbench：私聊里补建工作台群；在群里 @我发，就把那个群当工作台",
+      "- /pause、/resume：停发、恢复通知",
     ].join("\n"),
-  pausedNow: "已暂停：不再发通知，也不往 agent 里送（发「恢复」继续）。",
+  pausedNow: "已暂停：不再发通知，也不往 agent 里送（发 /resume 继续）。",
   resumedNow: "已恢复。",
   testMessage: (machine) =>
     `**${machine} · 测试**\nagents-io-herdr 能发到这里了。herdr 里的 agent 卡住等你、或做完一段长活时，会在这里说一声。`,
@@ -142,29 +142,29 @@ const zh: Strings = {
   paneLine: (id, tab, place, kind, state, title) =>
     `- ${id}${tab && tab !== place ? ` · ${tab}` : ""} · ${place} · ${kind}${state ? ` · ${state}` : ""}${title ? ` · ${title}` : ""}`,
   panesNone: "herdr 里现在没有 pane。",
-  panesFooter: "「看 p2」看屏幕 ·「发 p2 文字」输入 ·「键 p2 esc」按键",
+  panesFooter: "/view p2 看屏幕 · /send p2 文字 输入 · /keys p2 esc 按键",
   viewLabel: (id) => `看 ${id}`,
   refreshLabel: "刷新",
   viewHead: (machine, id, place, kind, state) =>
     `**${machine} · ${id} · ${place} · ${kind}${state ? ` · ${state}` : ""}**`,
   viewEmpty: "（屏幕是空的）",
-  viewFooter: (id) => `回复这张卡片就是对 ${id} 说话（/看 刷新，/键 esc 按键）`,
-  viewFooterTopic: "在这个话题里回复就是对它说话（/看 刷新，/键 esc 按键）",
+  viewFooter: (id) => `回复这张卡片就是对 ${id} 说话（/view 刷新，/keys esc 按键）`,
+  viewFooterTopic: "在这个话题里回复就是对它说话（/view 刷新，/keys esc 按键）",
   paneUsage: [
     "用法：",
-    "- 「列表」：所有 pane",
-    "- 「看 <pane> [行数]」：看它的屏幕",
-    "- 「发 <pane> <文字>」：输入文字并回车",
-    "- 「键 <pane> <键>…」：按键，如 esc、enter、ctrl+c、up、1",
-    "<pane> 可以是 p2、w1:p2、tab 名或目录名。在 agent 的话题里用「/看」「/键 esc」。",
+    "- /ls：所有 pane",
+    "- /view <pane> [行数]：看它的屏幕",
+    "- /send <pane> <文字>：输入文字并回车",
+    "- /keys <pane> <键>…：按键，如 esc、enter、ctrl+c、up、1",
+    "<pane> 可以是 p2、w1:p2、tab 名或目录名。在 agent 的话题里用 /view、/keys esc。",
   ].join("\n"),
-  paneNotFound: (ref) => `没有叫「${ref}」的 pane。发「列表」看看有哪些。`,
+  paneNotFound: (ref) => `没有叫「${ref}」的 pane。发 /ls 看看有哪些。`,
   paneAmbiguous: (ref, ids) => `「${ref}」对得上好几个 pane：${ids.join("、")}。用 pane 的 id 说。`,
-  paneGone: (id) => `${id} 已经不是原来那个程序了，没有送到。发「列表」看看现在有哪些。`,
+  paneGone: (id) => `${id} 已经不是原来那个程序了，没有送到。发 /ls 看看现在有哪些。`,
   paneNotHere: "看屏幕和操作 pane 只在私聊和工作台里可以。",
   paneSent: (id) => `已送到 ${id}`,
   paneKeysSent: (id, keys) => `已在 ${id} 按 ${keys}`,
-  paneWaiting: "它在等你选，没有送到。点一个选项，或者用「键」：",
+  paneWaiting: "它在等你选，没有送到。点一个选项，或者用 /keys：",
   badKey: (reason) => `键名不对，什么都没按（${reason}）。可以用 esc、enter、tab、up、down、ctrl+c、1…`,
 };
 
@@ -204,9 +204,9 @@ const en: Strings = {
   workbenchCreated: (name) =>
     `Created the workbench group "${name}". Agents that wait for you or finish a long turn are announced there, one topic per agent; reply in a topic to talk to that agent.`,
   workbenchFailed: (reason) =>
-    `Could not create the workbench group (${reason}). Add me to any group and @-mention me with "workbench"; until then notices come here.`,
+    `Could not create the workbench group (${reason}). Add me to any group and @-mention me with /workbench; until then notices come here.`,
   workbenchHello: (machine) =>
-    `This is the workbench of ${machine}. When an agent in herdr waits for you or finishes a long turn, it gets a topic here; reply in the topic to talk to it, press a button to press that key. Send "status" to list all agents.`,
+    `This is the workbench of ${machine}. When an agent in herdr waits for you or finishes a long turn, it gets a topic here; reply in the topic to talk to it, press a button to press that key. Send /status to list all agents, /help for every command.`,
   workbenchSet:
     "Done: this group is the workbench. Agent notices come here, one topic per agent; reply in a topic to talk to that agent.",
   workbenchSame: "This group already is the workbench.",
@@ -227,16 +227,16 @@ const en: Strings = {
       `**${machine} · what I do**`,
       "- Reply in an agent's topic (in the DM: reply to its notice) to talk to it",
       "- Press a button on a waiting agent's notice to press that key in its dialog",
-      '- "status": list all agents',
-      '- "ls": list every pane (plain terminals too), with buttons to view each',
-      '- "view <pane> [lines]": its screen now; reply to that card to talk to that pane',
-      '- "send <pane> <text>": type the text and Enter',
-      '- "keys <pane> <key>…": press keys, e.g. esc, enter, ctrl+c, up, 1',
-      '- In an agent\'s topic: "/view" for its screen, "/keys esc" to press keys',
-      '- "workbench": in the DM, create the workbench group again; @-mention me with it in a group to use that group',
-      '- "pause" / "resume": stop / resume notices',
+      "- /status: list all agents",
+      "- /ls: list every pane (plain terminals too), with buttons to view each",
+      "- /view <pane> [lines]: its screen now; reply to that card to talk to that pane",
+      "- /send <pane> <text>: type the text and Enter",
+      "- /keys <pane> <key>…: press keys, e.g. esc, enter, ctrl+c, up, 1",
+      "- In an agent's topic: /view for its screen, /keys esc to press keys; other / commands go to the agent",
+      "- /workbench: in the DM, create the workbench group again; @-mention me with it in a group to use that group",
+      "- /pause, /resume: stop / resume notices",
     ].join("\n"),
-  pausedNow: 'Paused: no notices, nothing typed into agents (send "resume" to continue).',
+  pausedNow: "Paused: no notices, nothing typed into agents (send /resume to continue).",
   resumedNow: "Resumed.",
   testMessage: (machine) =>
     `**${machine} · test**\nagents-io-herdr can send here. When an agent in herdr waits for you or finishes a long turn, you will hear about it here.`,
@@ -246,7 +246,7 @@ const en: Strings = {
   paneLine: (id, tab, place, kind, state, title) =>
     `- ${id}${tab && tab !== place ? ` · ${tab}` : ""} · ${place} · ${kind}${state ? ` · ${state}` : ""}${title ? ` · ${title}` : ""}`,
   panesNone: "No panes in herdr right now.",
-  panesFooter: '"view p2" for its screen · "send p2 text" to type · "keys p2 esc" to press keys',
+  panesFooter: "/view p2 for its screen · /send p2 text to type · /keys p2 esc to press keys",
   viewLabel: (id) => `View ${id}`,
   refreshLabel: "Refresh",
   viewHead: (machine, id, place, kind, state) =>
@@ -256,19 +256,19 @@ const en: Strings = {
   viewFooterTopic: "Reply in this topic to talk to it (/view to refresh, /keys esc to press keys)",
   paneUsage: [
     "Usage:",
-    '- "ls": every pane',
-    '- "view <pane> [lines]": its screen',
-    '- "send <pane> <text>": type the text and Enter',
-    '- "keys <pane> <key>…": press keys, e.g. esc, enter, ctrl+c, up, 1',
-    '<pane> is p2, w1:p2, a tab\'s name or a directory. In an agent\'s topic: "/view", "/keys esc".',
+    "- /ls: every pane",
+    "- /view <pane> [lines]: its screen",
+    "- /send <pane> <text>: type the text and Enter",
+    "- /keys <pane> <key>…: press keys, e.g. esc, enter, ctrl+c, up, 1",
+    "<pane> is p2, w1:p2, a tab's name or a directory. In an agent's topic: /view, /keys esc.",
   ].join("\n"),
-  paneNotFound: (ref) => `No pane called "${ref}". Send "ls" to see them.`,
+  paneNotFound: (ref) => `No pane called "${ref}". Send /ls to see them.`,
   paneAmbiguous: (ref, ids) => `"${ref}" fits several panes: ${ids.join(", ")}. Name it by its id.`,
-  paneGone: (id) => `${id} runs something else now; not sent. Send "ls" to see what is there.`,
+  paneGone: (id) => `${id} runs something else now; not sent. Send /ls to see what is there.`,
   paneNotHere: "Screens and pane control only work in the DM and the workbench.",
   paneSent: (id) => `Sent to ${id}.`,
   paneKeysSent: (id, keys) => `Pressed ${keys} in ${id}.`,
-  paneWaiting: 'It is waiting for a choice; not sent. Pick one, or use "keys":',
+  paneWaiting: "It is waiting for a choice; not sent. Pick one, or use /keys:",
   badKey: (reason) => `Unknown key, nothing pressed (${reason}). Try esc, enter, tab, up, down, ctrl+c, 1…`,
 };
 
@@ -278,25 +278,14 @@ export type Command = "status" | "help" | "workbench" | "pause" | "resume";
 
 const COMMANDS: Record<string, Command> = {
   status: "status",
-  状态: "status",
   help: "help",
-  帮助: "help",
-  "?": "help",
-  "？": "help",
   workbench: "workbench",
-  工作台: "workbench",
   pause: "pause",
-  暂停: "pause",
   resume: "resume",
-  恢复: "resume",
 };
 
-/** A whole message that is one command word (any locale, an optional leading `/`), else null. */
+/** A whole message that is one command: `/` and the word (`/status`), else null. */
 export function commandOf(text: string): Command | null {
-  const t = text
-    .replace(/(^|\s)@\S+/g, "$1")
-    .trim()
-    .replace(/^\//, "")
-    .toLowerCase();
-  return COMMANDS[t] ?? null;
+  const m = /^\/(\S+)$/.exec(text.replace(/(^|\s)@\S+/g, "$1").trim());
+  return m ? (COMMANDS[(m[1] as string).toLowerCase()] ?? null) : null;
 }

@@ -901,7 +901,7 @@ export class Bridge {
   }
 
   /**
-   * `ls`, `看`, `发`, `键`. `scope`: the pane of the topic or screen card the command came in
+   * `/ls`, `/view`, `/send`, `/keys`. `scope`: the pane of the topic or screen card the command came in
    * (it must still run the same program); else the command names its pane.
    */
   async #paneCommand(pc: PaneCommand, scope: PaneRef | null, reply: PaneReply): Promise<void> {

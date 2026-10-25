@@ -47,15 +47,15 @@ The bridge talks to its daemon only over the agents-io host protocol (JSONL on a
 - only the bound owner can drive anything; anyone else gets a polite refusal, other bots are ignored;
 - every answer is short and in place: "Sent.", "Pressed 1.", or why not.
 
-**Commands** (the owner, in the DM, the workbench, or @-mentioning the bot in a group): `status` / `状态` (every agent: place, kind, state, since when — one card), `help` / `帮助`, `workbench` / `工作台` (DM: create the group again; in a group: use this group), `pause` / `暂停`, `resume` / `恢复`.
+**Commands** (the owner, in the DM, the workbench, or @-mentioning the bot in a group; always `/` and the word, so ordinary text is never taken for one): `/status` (every agent: place, kind, state, since when — one card), `/help`, `/workbench` (DM: create the group again; in a group: use this group), `/pause`, `/resume`.
 
 **Any pane, any time** (the owner, in the DM or the workbench only — a screen says what is on the computer):
 
-- `ls` / `列表`: every pane, plain terminals too (short id, tab, directory, kind, state, title), a "view" button each;
-- `view <pane> [lines]` / `看`: the pane's screen now (40 lines by default, at most 200), a refresh button, and a waiting dialog's choices as buttons; **reply to that card to type into that pane**;
-- `send <pane> <text>` / `发`: text and Enter — `agent.prompt` for an agent (not into a waiting dialog: the screen comes back with its buttons), literal text and Enter for a plain terminal;
-- `keys <pane> <key>…` / `键`: key presses by herdr's names (`esc`, `enter`, `tab`, `up`, `ctrl+c`, `1`…); herdr checks every name before it types anything;
-- in an agent's topic (or under a screen card), `/view [lines]` / `/看` and `/keys <key>…` / `/键` act on that pane; anything else there is still typed into it.
+- `/ls`: every pane, plain terminals too (short id, tab, directory, kind, state, title), a "view" button each;
+- `/view <pane> [lines]`: the pane's screen now (40 lines by default, at most 200), a refresh button, and a waiting dialog's choices as buttons; **reply to that card to type into that pane**;
+- `/send <pane> <text>`: text and Enter — `agent.prompt` for an agent (not into a waiting dialog: the screen comes back with its buttons), literal text and Enter for a plain terminal;
+- `/keys <pane> <key>…`: key presses by herdr's names (`esc`, `enter`, `tab`, `up`, `ctrl+c`, `1`…); herdr checks every name before it types anything;
+- in an agent's topic (or under a screen card), `/view [lines]` and `/keys <key>…` act on that pane; anything else there, other `/` commands too (the agent's own `/compact`), is still typed into it.
 
 `<pane>` is the pane's id (`w1:p2`), its short id (`p2`), its tab's label or its directory, the first that fits uniquely. Buttons and screen cards are tied to the program running in the pane (herdr's `terminal_id`): once another program runs there, they reach nothing.
 
@@ -92,7 +92,7 @@ On [open.feishu.cn](https://open.feishu.cn/app) (or open.larksuite.com) create a
   }
   ```
 
-  `im:message.group_msg` lets the bot see your replies in a topic without an @-mention; `im:chat:create` lets it create the workbench group (without it, add the bot to a group yourself and @-mention it with `workbench`).
+  `im:message.group_msg` lets the bot see your replies in a topic without an @-mention; `im:chat:create` lets it create the workbench group (without it, add the bot to a group yourself and @-mention it with `/workbench`).
 - **Events & callbacks:** choose **long connection** (no public URL needed) for both; subscribe to the event `im.message.receive_v1` and the callback `card.action.trigger`. Feishu saves the long-connection mode only while a client is connected: if the console refuses, finish steps 2–5 first (the daemon keeps retrying) and come back.
 - **Publish** a version, and make the app available to yourself.
 
@@ -140,7 +140,7 @@ loads two launch agents: the project's own agents-io daemon (`agents-io-herdr da
 agents-io-herdr setup --wait
 ```
 
-prints a one-time code (valid 15 minutes, 5 tries). Send it to the bot in a direct message. Whoever sends it becomes the owner; the bridge then creates the workbench group (you and the bot, named "my-mac terminal" / "my-mac 终端"), says hello there, and tells you in the DM. If the group cannot be created (e.g. `im:chat:create` missing), add the bot to any group and @-mention it with `workbench` / `工作台`; until then notices come to your DM.
+prints a one-time code (valid 15 minutes, 5 tries). Send it to the bot in a direct message. Whoever sends it becomes the owner; the bridge then creates the workbench group (you and the bot, named "my-mac terminal" / "my-mac 终端"), says hello there, and tells you in the DM. If the group cannot be created (e.g. `im:chat:create` missing), add the bot to any group and @-mention it with `/workbench`; until then notices come to your DM.
 
 `agents-io-herdr test` sends a test message to check the path end to end.
 

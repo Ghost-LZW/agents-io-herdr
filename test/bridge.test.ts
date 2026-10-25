@@ -255,7 +255,7 @@ describe("setup: binding the owner and the workbench", () => {
     expect(n?.route).toEqual({ channel: "lark-bot", account: ACCOUNT, conversationId: DM });
     expect(n?.message.sections?.[0]?.text).toBe("w1:p1 · reply to this message to talk to it");
     // The owner names a group.
-    await send(w, { from: OWNER, chat: "oc_test_group", kind: "group", text: "@_user_1 workbench" });
+    await send(w, { from: OWNER, chat: "oc_test_group", kind: "group", text: "@_user_1 /workbench" });
     expect(w.store.state.workbench).toMatchObject({ chatId: "oc_test_group", via: "mention" });
     expect(w.aio.delivered.at(-1)).toMatchObject({
       route: { conversationId: "oc_test_group" },
@@ -516,7 +516,7 @@ describe("notices and answers", () => {
     ];
     await w.bridge.tick();
     w.clock.now += 5 * 60_000;
-    await send(w, { chat: DM, kind: "dm", text: "状态" });
+    await send(w, { chat: DM, kind: "dm", text: "/status" });
     const card = w.aio.delivered.at(-1);
     expect(card?.route).toMatchObject({ conversationId: DM });
     expect(card?.message.text).toBe(
@@ -531,13 +531,18 @@ describe("notices and answers", () => {
     expect(w.aio.delivered.at(-1)?.message.text).toMatch(/^\*\*my-mac · what I do\*\*/);
     await send(w, { chat: DM, kind: "dm", text: "what is going on" });
     expect(w.aio.delivered.at(-1)?.message.text).toMatch(/^\*\*my-mac · what I do\*\*/);
+    // Only `/` commands: the bare word, in any language, is not one.
+    for (const text of ["status", "状态", "ls", "列表", "看 p1"]) {
+      await send(w, { chat: DM, kind: "dm", text });
+      expect(w.aio.delivered.at(-1)?.message.text).toMatch(/^\*\*my-mac · what I do\*\*/);
+    }
     // Pause: nothing is sent, nothing typed.
-    await send(w, { chat: DM, kind: "dm", text: "pause" });
+    await send(w, { chat: DM, kind: "dm", text: "/pause" });
     expect(existsSync(w.cfg.paths.pauseFile)).toBe(true);
     const n = w.aio.delivered.length;
     await blockedNotice(w);
     expect(w.aio.delivered).toHaveLength(n);
-    await send(w, { chat: DM, kind: "dm", text: "恢复" });
+    await send(w, { chat: DM, kind: "dm", text: "/resume" });
     expect(existsSync(w.cfg.paths.pauseFile)).toBe(false);
     expect(w.aio.delivered.at(-1)?.message.text).toBe("Resumed.");
   });
@@ -612,7 +617,7 @@ describe("looking at and driving any pane", () => {
   });
 
   it("lists every pane, plain terminals too, with a view button each", async () => {
-    await send(w, { chat: DM, kind: "dm", text: "列表" });
+    await send(w, { chat: DM, kind: "dm", text: "/ls" });
     const card = w.aio.delivered.at(-1);
     expect(card?.message.text).toBe(
       [
@@ -629,7 +634,7 @@ describe("looking at and driving any pane", () => {
 
   it("shows a pane's screen by any of its names, and a reply to the card talks to that pane", async () => {
     for (const ref of ["p3", "w1:p3", "tail", "scratch"]) {
-      await send(w, { chat: DM, kind: "dm", text: `view ${ref}` });
+      await send(w, { chat: DM, kind: "dm", text: `/view ${ref}` });
       expect(w.aio.delivered.at(-1)?.message.text).toBe(
         "**my-mac · p3 · scratch · terminal**\nzsh\n```\n$ make\nok\n```",
       );
@@ -669,27 +674,27 @@ describe("looking at and driving any pane", () => {
 
   it("sends text to an agent as a prompt, presses keys, and refuses bad keys before typing", async () => {
     const n = w.aio.delivered.length;
-    const sent = await send(w, { chat: WORKBENCH, kind: "group", text: "发 ledger run the tests" });
+    const sent = await send(w, { chat: WORKBENCH, kind: "group", text: "/send ledger run the tests" });
     expect(w.herdr.actions).toEqual([["agent.prompt", { target: "w1:p1", text: "run the tests" }]]);
-    const keys = await send(w, { chat: DM, kind: "dm", text: "键 p1 esc up enter" });
+    const keys = await send(w, { chat: DM, kind: "dm", text: "/keys p1 esc up enter" });
     expect(w.herdr.actions.at(-1)).toEqual(["pane.send_keys", { pane_id: "w1:p1", keys: ["esc", "up", "enter"] }]);
     expect(w.feishu.reacted()).toEqual([
       [sent.envelope.id, "DONE"],
       [keys.envelope.id, "DONE"],
     ]);
     expect(w.aio.delivered).toHaveLength(n);
-    await send(w, { chat: DM, kind: "dm", text: "keys p1 esc launch-missiles" });
+    await send(w, { chat: DM, kind: "dm", text: "/keys p1 esc launch-missiles" });
     expect(w.aio.delivered.at(-1)?.message.text).toMatch(/^Unknown key, nothing pressed/);
-    await send(w, { chat: DM, kind: "dm", text: "view nowhere" });
-    expect(w.aio.delivered.at(-1)?.message.text).toBe('No pane called "nowhere". Send "ls" to see them.');
-    await send(w, { chat: DM, kind: "dm", text: "send p1" });
+    await send(w, { chat: DM, kind: "dm", text: "/view nowhere" });
+    expect(w.aio.delivered.at(-1)?.message.text).toBe('No pane called "nowhere". Send /ls to see them.');
+    await send(w, { chat: DM, kind: "dm", text: "/send p1" });
     expect(w.aio.delivered.at(-1)?.message.text).toMatch(/^Usage:/);
   });
 
   it("shows a waiting dialog instead of typing into it, with buttons that press its keys", async () => {
     w.herdr.agents = [{ ...CODEX, agent_status: "blocked" }, SHELL];
     w.herdr.screens.set("w1:p1", DIALOG);
-    await send(w, { chat: DM, kind: "dm", text: "send p1 yes" });
+    await send(w, { chat: DM, kind: "dm", text: "/send p1 yes" });
     expect(w.herdr.actions).toEqual([]);
     const card = w.aio.delivered.at(-1);
     expect(card?.message.text).toMatch(/^It is waiting for a choice; not sent\./);
@@ -728,15 +733,17 @@ describe("looking at and driving any pane", () => {
     expect(w.herdr.actions).toEqual([["pane.send_keys", { pane_id: "w1:p1", keys: ["esc"] }]]);
     await send(w, { ...topic, text: "view the logs please" });
     expect(w.herdr.actions.at(-1)).toEqual(["agent.prompt", { target: "w1:p1", text: "view the logs please" }]);
+    await send(w, { ...topic, text: "/compact" });
+    expect(w.herdr.actions.at(-1)).toEqual(["agent.prompt", { target: "w1:p1", text: "/compact" }]);
   });
 
   it("shows nothing outside the DM and the workbench, and to nobody but the owner", async () => {
-    await send(w, { chat: "oc_test_group", kind: "group", text: "@_user_1 view p3" });
+    await send(w, { chat: "oc_test_group", kind: "group", text: "@_user_1 /view p3" });
     expect(w.aio.delivered.at(-1)?.message.text).toBe(
       "Screens and pane control only work in the DM and the workbench.",
     );
     const n = w.aio.delivered.length;
-    await send(w, { from: STRANGER, chat: WORKBENCH, kind: "group", text: "view p3" });
+    await send(w, { from: STRANGER, chat: WORKBENCH, kind: "group", text: "/view p3" });
     expect(w.aio.delivered).toHaveLength(n);
     await send(w, { from: STRANGER, chat: WORKBENCH, action: { actionId: "herdr:view:term_3", messageId: "om_x" } });
     expect(w.aio.delivered.at(-1)?.message.text).toBe("Only this machine's owner can answer this agent.");
