@@ -54,11 +54,22 @@ export interface State {
   threads: Thread[];
   /** Message id → thread id (null: not about one pane), oldest first, capped. */
   messages: [string, string | null][];
+  /** Screen cards (and answers under them) → the pane they show, oldest first, capped. */
+  views: View[];
   /** Inbound items already taken (`channelRef`), oldest first, capped: the queue delivers at least once. */
   handled: string[];
 }
 
+/** A message about one pane outside its topic: a reply to it is typed into that pane. */
+export interface View {
+  messageId: string;
+  chatId: string;
+  paneId: string;
+  terminalId: string;
+}
+
 const MESSAGES_MAX = 4000;
+const VIEWS_MAX = 500;
 const HANDLED_MAX = 1000;
 /** Closed threads are kept this long, so a late reply still gets a precise answer. */
 const CLOSED_KEEP_MS = 14 * 24 * 3600_000;
@@ -70,6 +81,7 @@ export const emptyState = (): State => ({
   workbenchError: null,
   threads: [],
   messages: [],
+  views: [],
   handled: [],
 });
 
@@ -112,6 +124,23 @@ export class Store {
     if (m.some(([id]) => id === messageId)) return;
     m.push([messageId, threadId]);
     if (m.length > MESSAGES_MAX) m.splice(0, m.length - MESSAGES_MAX);
+  }
+
+  /** Records a message as being about one pane (a screen card, an answer under one). */
+  rememberView(v: View): void {
+    const views = this.state.views;
+    if (views.some((x) => x.messageId === v.messageId)) return;
+    views.push(v);
+    if (views.length > VIEWS_MAX) views.splice(0, views.length - VIEWS_MAX);
+  }
+
+  /** The pane a message replies to, through a known screen card among `ids`. */
+  viewOf(chatId: string, ids: string[]): View | null {
+    for (const id of ids) {
+      const v = this.state.views.find((x) => x.messageId === id && x.chatId === chatId);
+      if (v) return v;
+    }
+    return null;
   }
 
   /** True the first time `ref` is seen (and remembers it). */

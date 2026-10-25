@@ -49,6 +49,16 @@ The bridge talks to its daemon only over the agents-io host protocol (JSONL on a
 
 **Commands** (the owner, in the DM, the workbench, or @-mentioning the bot in a group): `status` / `状态` (every agent: place, kind, state, since when — one card), `help` / `帮助`, `workbench` / `工作台` (DM: create the group again; in a group: use this group), `pause` / `暂停`, `resume` / `恢复`.
 
+**Any pane, any time** (the owner, in the DM or the workbench only — a screen says what is on the computer):
+
+- `ls` / `列表`: every pane, plain terminals too (short id, tab, directory, kind, state, title), a "view" button each;
+- `view <pane> [lines]` / `看`: the pane's screen now (40 lines by default, at most 200), a refresh button, and a waiting dialog's choices as buttons; **reply to that card to type into that pane**;
+- `send <pane> <text>` / `发`: text and Enter — `agent.prompt` for an agent (not into a waiting dialog: the screen comes back with its buttons), literal text and Enter for a plain terminal;
+- `keys <pane> <key>…` / `键`: key presses by herdr's names (`esc`, `enter`, `tab`, `up`, `ctrl+c`, `1`…); herdr checks every name before it types anything;
+- in an agent's topic (or under a screen card), `/view [lines]` / `/看` and `/keys <key>…` / `/键` act on that pane; anything else there is still typed into it.
+
+`<pane>` is the pane's id (`w1:p2`), its short id (`p2`), its tab's label or its directory, the first that fits uniquely. Buttons and screen cards are tied to the program running in the pane (herdr's `terminal_id`): once another program runs there, they reach nothing.
+
 ## Requirements
 
 - macOS for `install` (launchd); the bridge itself runs wherever Node runs, but "is the person looking" needs macOS.

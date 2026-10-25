@@ -8,7 +8,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type Config, resolveConfig } from "../src/config.ts";
-import type { HerdrAgent } from "../src/herdr.ts";
+import type { HerdrAgent, HerdrTab } from "../src/herdr.ts";
 import type {
   BindingTable,
   ContentBlock,
@@ -297,9 +297,15 @@ export function inbound(m: Msg): InboundItem {
 
 // ---- herdr --------------------------------------------------------------------------------------
 
+const READS = new Set(["agent.list", "agent.read", "pane.list", "pane.read", "tab.list"]);
+/** Key names the fake accepts; herdr refuses others (`invalid_key`) before writing anything. */
+const KEYS = /^(?:[1-9]|esc|enter|tab|up|down|left|right|space|backspace|ctrl\+[a-z])$/;
+
 export class FakeHerdr {
   readonly socket: string;
+  /** Every pane; the ones with `agent` set are agents. */
   agents: HerdrAgent[] = [];
+  tabs: HerdrTab[] = [];
   screens = new Map<string, string>();
   calls: [string, Record<string, unknown>][] = [];
   /** Error code for a method, e.g. `agent.prompt` → `agent_blocked`. */
@@ -317,7 +323,8 @@ export class FakeHerdr {
         if (nl < 0) return;
         const req = JSON.parse(buf.slice(0, nl)) as { id: string; method: string; params: Record<string, unknown> };
         this.calls.push([req.method, req.params]);
-        const err = this.errors.get(req.method);
+        const bad = req.method.endsWith("send_keys") && this.#result(req.method, req.params) === null;
+        const err = bad ? "invalid_key" : this.errors.get(req.method);
         const answer = err
           ? { id: req.id, error: { code: err, message: `${req.method}: ${err}` } }
           : { id: req.id, result: this.#result(req.method, req.params) };
@@ -327,14 +334,18 @@ export class FakeHerdr {
   }
 
   #result(method: string, params: Record<string, unknown>): unknown {
-    if (method === "agent.list") return { agents: this.agents };
+    if (method === "agent.list") return { agents: this.agents.filter((a) => a.agent) };
+    if (method === "pane.list") return { panes: this.agents };
+    if (method === "tab.list") return { tabs: this.tabs };
     if (method === "agent.read") return { read: { text: this.screens.get(String(params.target)) ?? "" } };
+    if (method === "pane.read") return { read: { text: this.screens.get(String(params.pane_id)) ?? "" } };
+    if (method.endsWith("send_keys") && (params.keys as string[]).some((k) => !KEYS.test(k))) return null;
     return {};
   }
 
-  /** Calls other than `agent.list` and `agent.read`. */
+  /** Calls other than reading. */
   get actions(): [string, Record<string, unknown>][] {
-    return this.calls.filter(([m]) => m !== "agent.list" && m !== "agent.read");
+    return this.calls.filter(([m]) => !READS.has(m));
   }
 
   async start(): Promise<void> {
@@ -358,6 +369,8 @@ export interface FeishuCall {
 /** A fetch answering the token and chat-create endpoints; `chat` decides the create answer. */
 export function fakeFeishu(chat: { code: number; chatId?: string; msg?: string } = { code: 0, chatId: WORKBENCH }) {
   const calls: FeishuCall[] = [];
+  /** The answer code for reactions (99991672: the scope is missing). */
+  const reactions = { code: 0 };
   const f = (async (url: string, init: RequestInit) => {
     const headers = (init.headers ?? {}) as Record<string, string>;
     calls.push({ url, body: JSON.parse(String(init.body)), auth: headers.authorization ?? null });
@@ -373,9 +386,20 @@ export function fakeFeishu(chat: { code: number; chatId?: string; msg?: string }
         }),
       );
     }
+    if (/\/im\/v1\/messages\/[^/]+\/reactions$/.test(url)) {
+      return new Response(JSON.stringify({ code: reactions.code, msg: reactions.code ? "Access denied" : "ok" }));
+    }
     return new Response(JSON.stringify({ code: 404, msg: "not found" }), { status: 404 });
   }) as typeof fetch;
-  return { fetch: f, calls };
+  /** The reactions put so far: [message id, emoji]. */
+  const reacted = () =>
+    calls
+      .filter((c) => c.url.endsWith("/reactions"))
+      .map((c) => [
+        decodeURIComponent(c.url.split("/messages/")[1]?.split("/")[0] ?? ""),
+        (c.body.reaction_type as { emoji_type: string }).emoji_type,
+      ]);
+  return { fetch: f, calls, reactions, reacted };
 }
 
 /** Waits until `check` holds (polling), or fails after `ms`. */

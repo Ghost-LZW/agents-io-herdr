@@ -297,7 +297,7 @@ describe("notices and answers", () => {
     expect(w.store.state.threads).toHaveLength(1);
   });
 
-  it("types the owner's reply in the topic into that pane, once, and says so in the topic", async () => {
+  it("types the owner's reply in the topic into that pane, once, and marks the message done", async () => {
     await blockedNotice(w);
     await run(w, 2, "idle");
     const t = w.store.state.threads[0];
@@ -309,15 +309,40 @@ describe("notices and answers", () => {
       text: "run the tests again",
     });
     expect(w.herdr.actions).toEqual([["agent.prompt", { target: "w1:p1", text: "run the tests again" }]]);
-    expect(w.aio.delivered.at(-1)).toMatchObject({
-      route: { conversationId: WORKBENCH, threadId: "omt_test_topic", replyToMessageId: item.envelope.id },
-      message: { text: "Sent." },
-    });
+    // "Sent" is a reaction on the owner's message, not another message.
+    const n = w.aio.delivered.length;
+    expect(w.feishu.reacted()).toEqual([[item.envelope.id, "DONE"]]);
+    expect(w.feishu.calls.at(-1)?.auth).toBe("Bearer t-test-token");
     // The daemon delivers at least once: the same message again types nothing.
     const again = await w.aio.push(item);
     expect(again).toMatchObject({ ok: true, value: { accepted: true } });
     await w.bridge.settled();
     expect(w.herdr.actions).toHaveLength(1);
+    expect(w.feishu.reacted()).toHaveLength(1);
+    expect(w.aio.delivered).toHaveLength(n);
+  });
+
+  it("says it in words when the app may not react", async () => {
+    w.feishu.reactions.code = 99991672;
+    await blockedNotice(w);
+    await run(w, 2, "idle");
+    const t = w.store.state.threads[0];
+    const topic = {
+      chat: WORKBENCH,
+      kind: "thread" as const,
+      threadId: "omt_test_topic",
+      rootMessageId: t?.rootMessageId,
+    };
+    const item = await send(w, { ...topic, text: "go on" });
+    expect(w.aio.delivered.at(-1)).toMatchObject({
+      route: { conversationId: WORKBENCH, threadId: "omt_test_topic", replyToMessageId: item.envelope.id },
+      message: { text: "Sent." },
+    });
+    // It does not ask again until a restart.
+    await send(w, { ...topic, text: "and lint" });
+    expect(w.feishu.reacted()).toHaveLength(1);
+    expect(w.aio.delivered.at(-1)?.message.text).toBe("Sent.");
+    expect(w.logs.filter((l) => l.startsWith("reactions refused"))).toHaveLength(1);
   });
 
   it("finds the pane by the topic id alone, and by a reply to its own answer", async () => {
@@ -328,10 +353,10 @@ describe("notices and answers", () => {
     await send(w, { chat: WORKBENCH, action: { actionId: `herdr:key:${t?.id}:1`, messageId: t?.rootMessageId ?? "" } });
     const topic = w.store.thread(t?.id ?? "")?.threadId;
     expect(topic).toBeTruthy();
-    await send(w, { chat: WORKBENCH, kind: "thread", threadId: topic ?? undefined, text: "go on" });
-    const answer = w.aio.delivered.at(-1);
-    expect(answer?.message.text).toBe("Sent.");
+    const goOn = await send(w, { chat: WORKBENCH, kind: "thread", threadId: topic ?? undefined, text: "go on" });
+    expect(w.feishu.reacted()).toEqual([[goOn.envelope.id, "DONE"]]);
     const answerId = [...w.store.state.messages].reverse().find(([, tid]) => tid === t?.id)?.[0];
+    expect(answerId).toBe(goOn.envelope.id);
     await send(w, {
       chat: WORKBENCH,
       kind: "group",
@@ -547,9 +572,175 @@ describe("in the DM, without a workbench", () => {
     await blockedNotice(w);
     await run(w, 2, "idle");
     const notice = w.store.state.threads[0]?.rootMessageId;
-    await send(w, { chat: DM, kind: "dm", parentMessageId: notice, rootMessageId: notice, text: "continue" });
+    const item = await send(w, {
+      chat: DM,
+      kind: "dm",
+      parentMessageId: notice,
+      rootMessageId: notice,
+      text: "continue",
+    });
     expect(w.herdr.actions).toEqual([["agent.prompt", { target: "w1:p1", text: "continue" }]]);
-    expect(w.aio.delivered.at(-1)?.route).toMatchObject({ conversationId: DM, replyToMessageId: expect.any(String) });
-    expect(w.aio.delivered.at(-1)?.route.threadId).toBeUndefined();
+    expect(w.feishu.reacted()).toEqual([[item.envelope.id, "DONE"]]);
+    // A quote-reply to that message reaches the same agent.
+    await send(w, { chat: DM, kind: "dm", parentMessageId: item.envelope.id, text: "and lint" });
+    expect(w.herdr.actions.at(-1)).toEqual(["agent.prompt", { target: "w1:p1", text: "and lint" }]);
+  });
+});
+
+describe("looking at and driving any pane", () => {
+  const SHELL = agent("unknown", {
+    pane_id: "w1:p3",
+    terminal_id: "term_3",
+    agent: null,
+    cwd: "/home/dev/scratch",
+    foreground_cwd: "/home/dev/scratch",
+    terminal_title_stripped: "zsh",
+    tab_id: "w1:t3",
+  });
+  const CODEX = agent("idle", { tab_id: "w1:t1" });
+
+  beforeEach(async () => {
+    w = await world();
+    await bind(w);
+    w.herdr.agents = [CODEX, SHELL];
+    w.herdr.tabs = [
+      { tab_id: "w1:t1", workspace_id: "w1", number: 1, label: "ledger" },
+      { tab_id: "w1:t3", workspace_id: "w1", number: 3, label: "tail" },
+    ];
+    w.herdr.screens.set("w1:p1", "⏺ All tests pass.");
+    w.herdr.screens.set("w1:p3", "$ make\nok");
+  });
+
+  it("lists every pane, plain terminals too, with a view button each", async () => {
+    await send(w, { chat: DM, kind: "dm", text: "列表" });
+    const card = w.aio.delivered.at(-1);
+    expect(card?.message.text).toBe(
+      [
+        "**my-mac · 2 panes**",
+        "- p1 · ledger · Codex · idle · fix the parser",
+        "- p3 · tail · scratch · terminal · zsh",
+      ].join("\n"),
+    );
+    expect(card?.message.actions).toEqual([
+      { id: "herdr:view:term_1", label: "View p1" },
+      { id: "herdr:view:term_3", label: "View p3" },
+    ]);
+  });
+
+  it("shows a pane's screen by any of its names, and a reply to the card talks to that pane", async () => {
+    for (const ref of ["p3", "w1:p3", "tail", "scratch"]) {
+      await send(w, { chat: DM, kind: "dm", text: `view ${ref}` });
+      expect(w.aio.delivered.at(-1)?.message.text).toBe(
+        "**my-mac · p3 · scratch · terminal**\nzsh\n```\n$ make\nok\n```",
+      );
+    }
+    const card = w.aio.delivered.at(-1);
+    expect(card?.message.actions).toEqual([{ id: "herdr:view:term_3", label: "Refresh" }]);
+    const cardId = w.store.state.views.at(-1)?.messageId;
+    const n = w.aio.delivered.length;
+    const make = await send(w, {
+      chat: DM,
+      kind: "dm",
+      parentMessageId: cardId,
+      rootMessageId: cardId,
+      text: "make test",
+    });
+    expect(w.herdr.actions).toEqual([
+      ["pane.send_text", { pane_id: "w1:p3", text: "make test" }],
+      ["pane.send_keys", { pane_id: "w1:p3", keys: ["enter"] }],
+    ]);
+    expect(w.feishu.reacted()).toEqual([[make.envelope.id, "DONE"]]);
+    expect(w.aio.delivered).toHaveLength(n);
+    // A reply to that message reaches the same pane; `/keys` there presses keys.
+    await send(w, {
+      chat: DM,
+      kind: "dm",
+      parentMessageId: make.envelope.id,
+      rootMessageId: make.envelope.id,
+      text: "/keys ctrl+c",
+    });
+    expect(w.herdr.actions.at(-1)).toEqual(["pane.send_keys", { pane_id: "w1:p3", keys: ["ctrl+c"] }]);
+    // Another program in that pane now: the old card reaches nothing.
+    w.herdr.agents = [CODEX, { ...SHELL, terminal_id: "term_9" }];
+    await send(w, { chat: DM, kind: "dm", parentMessageId: cardId, rootMessageId: cardId, text: "rm -rf /" });
+    expect(w.herdr.actions).toHaveLength(3);
+    expect(w.aio.delivered.at(-1)?.message.text).toMatch(/^p3 runs something else now/);
+  });
+
+  it("sends text to an agent as a prompt, presses keys, and refuses bad keys before typing", async () => {
+    const n = w.aio.delivered.length;
+    const sent = await send(w, { chat: WORKBENCH, kind: "group", text: "发 ledger run the tests" });
+    expect(w.herdr.actions).toEqual([["agent.prompt", { target: "w1:p1", text: "run the tests" }]]);
+    const keys = await send(w, { chat: DM, kind: "dm", text: "键 p1 esc up enter" });
+    expect(w.herdr.actions.at(-1)).toEqual(["pane.send_keys", { pane_id: "w1:p1", keys: ["esc", "up", "enter"] }]);
+    expect(w.feishu.reacted()).toEqual([
+      [sent.envelope.id, "DONE"],
+      [keys.envelope.id, "DONE"],
+    ]);
+    expect(w.aio.delivered).toHaveLength(n);
+    await send(w, { chat: DM, kind: "dm", text: "keys p1 esc launch-missiles" });
+    expect(w.aio.delivered.at(-1)?.message.text).toMatch(/^Unknown key, nothing pressed/);
+    await send(w, { chat: DM, kind: "dm", text: "view nowhere" });
+    expect(w.aio.delivered.at(-1)?.message.text).toBe('No pane called "nowhere". Send "ls" to see them.');
+    await send(w, { chat: DM, kind: "dm", text: "send p1" });
+    expect(w.aio.delivered.at(-1)?.message.text).toMatch(/^Usage:/);
+  });
+
+  it("shows a waiting dialog instead of typing into it, with buttons that press its keys", async () => {
+    w.herdr.agents = [{ ...CODEX, agent_status: "blocked" }, SHELL];
+    w.herdr.screens.set("w1:p1", DIALOG);
+    await send(w, { chat: DM, kind: "dm", text: "send p1 yes" });
+    expect(w.herdr.actions).toEqual([]);
+    const card = w.aio.delivered.at(-1);
+    expect(card?.message.text).toMatch(/^It is waiting for a choice; not sent\./);
+    expect(card?.message.actions?.map((a) => a.id)).toEqual([
+      "herdr:pk:term_1:1",
+      "herdr:pk:term_1:2",
+      "herdr:pk:term_1:esc",
+      "herdr:view:term_1",
+    ]);
+    await send(w, { chat: DM, action: { actionId: "herdr:pk:term_1:1", messageId: "om_test_card" } });
+    expect(w.herdr.actions).toEqual([["pane.send_keys", { pane_id: "w1:p1", keys: ["1"] }]]);
+    // The refresh button shows the screen again.
+    await send(w, { chat: DM, action: { actionId: "herdr:view:term_1", messageId: "om_test_card" } });
+    expect(w.aio.delivered.at(-1)?.message.text).toContain("❯ 1. Yes");
+  });
+
+  it("in a pane's topic, /view shows its screen and plain text still goes to the agent", async () => {
+    w.herdr.agents = [agent("working", { tab_id: "w1:t1" }), SHELL];
+    w.herdr.screens.set("w1:p1", DIALOG);
+    await w.bridge.tick();
+    await run(w, 64, "blocked");
+    await run(w, 2, "idle");
+    const t = w.store.state.threads[0];
+    const topic = {
+      chat: WORKBENCH,
+      kind: "thread" as const,
+      threadId: "omt_test_topic",
+      rootMessageId: t?.rootMessageId,
+    };
+    await send(w, { ...topic, text: "/view 5" });
+    const card = w.aio.delivered.at(-1);
+    expect(card?.route).toMatchObject({ conversationId: WORKBENCH, threadId: "omt_test_topic" });
+    expect(card?.message.text).toContain("❯ 1. Yes");
+    expect(card?.message.sections?.[0]?.text).toMatch(/^Reply in this topic/);
+    await send(w, { ...topic, text: "/keys esc" });
+    expect(w.herdr.actions).toEqual([["pane.send_keys", { pane_id: "w1:p1", keys: ["esc"] }]]);
+    await send(w, { ...topic, text: "view the logs please" });
+    expect(w.herdr.actions.at(-1)).toEqual(["agent.prompt", { target: "w1:p1", text: "view the logs please" }]);
+  });
+
+  it("shows nothing outside the DM and the workbench, and to nobody but the owner", async () => {
+    await send(w, { chat: "oc_test_group", kind: "group", text: "@_user_1 view p3" });
+    expect(w.aio.delivered.at(-1)?.message.text).toBe(
+      "Screens and pane control only work in the DM and the workbench.",
+    );
+    const n = w.aio.delivered.length;
+    await send(w, { from: STRANGER, chat: WORKBENCH, kind: "group", text: "view p3" });
+    expect(w.aio.delivered).toHaveLength(n);
+    await send(w, { from: STRANGER, chat: WORKBENCH, action: { actionId: "herdr:view:term_3", messageId: "om_x" } });
+    expect(w.aio.delivered.at(-1)?.message.text).toBe("Only this machine's owner can answer this agent.");
+    await send(w, { chat: "oc_test_group", action: { actionId: "herdr:pk:term_3:1", messageId: "om_x" } });
+    expect(w.herdr.actions).toEqual([]);
   });
 });

@@ -116,4 +116,17 @@ export class FeishuApi {
     if (!chatId) throw new FeishuError("no_chat_id", "chat_id missing in the answer");
     return { chatId };
   }
+
+  /** An emoji reaction on a message (`DONE`, … from Feishu's list). Needs `im:message.reactions:write_only`. */
+  async react(messageId: string, emoji: string): Promise<void> {
+    await this.#call(
+      "POST",
+      `/im/v1/messages/${encodeURIComponent(messageId)}/reactions`,
+      { reaction_type: { emoji_type: emoji } },
+      true,
+    );
+  }
 }
+
+/** Feishu's answers when the app lacks a scope: retrying will not help until it is granted. */
+export const isScopeError = (e: unknown) => e instanceof FeishuError && (e.code === 99991672 || e.code === 99991679);

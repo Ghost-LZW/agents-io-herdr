@@ -44,6 +44,26 @@ export interface Strings {
   resumedNow: string;
   testMessage: (machine: string) => string;
   noDestination: string;
+  terminalKind: string;
+  panesHead: (machine: string, n: number) => string;
+  paneLine: (id: string, tab: string, place: string, kind: string, state: string, title: string) => string;
+  panesNone: string;
+  panesFooter: string;
+  viewLabel: (id: string) => string;
+  refreshLabel: string;
+  viewHead: (machine: string, id: string, place: string, kind: string, state: string) => string;
+  viewEmpty: string;
+  viewFooter: (id: string) => string;
+  viewFooterTopic: string;
+  paneUsage: string;
+  paneNotFound: (ref: string) => string;
+  paneAmbiguous: (ref: string, ids: string[]) => string;
+  paneGone: (id: string) => string;
+  paneNotHere: string;
+  paneSent: (id: string) => string;
+  paneKeysSent: (id: string, keys: string) => string;
+  paneWaiting: string;
+  badKey: (reason: string) => string;
 }
 
 const zh: Strings = {
@@ -104,6 +124,11 @@ const zh: Strings = {
       "- 在 agent 的话题里回复（私聊里回复它的通知）：就是对它说话",
       "- 卡住时点按钮：就是在它的对话框里按那个键",
       "- 「状态」：列出所有 agent",
+      "- 「列表」：列出所有 pane（包括普通终端），点按钮看屏幕",
+      "- 「看 <pane> [行数]」：看它现在的屏幕；回复那张卡片就是对那个 pane 说话",
+      "- 「发 <pane> <文字>」：输入文字并回车",
+      "- 「键 <pane> <键>…」：按键，如 esc、enter、ctrl+c、up、1",
+      "- 在 agent 的话题里：「/看」看屏幕，「/键 esc」按键",
       "- 「工作台」：私聊里补建工作台群；在群里 @我说，就把那个群当工作台",
       "- 「暂停」/「恢复」：停发、恢复通知",
     ].join("\n"),
@@ -112,6 +137,35 @@ const zh: Strings = {
   testMessage: (machine) =>
     `**${machine} · 测试**\nagents-io-herdr 能发到这里了。herdr 里的 agent 卡住等你、或做完一段长活时，会在这里说一声。`,
   noDestination: "还没有主人：运行 agents-io-herdr setup",
+  terminalKind: "终端",
+  panesHead: (machine, n) => `**${machine} · ${n} 个 pane**`,
+  paneLine: (id, tab, place, kind, state, title) =>
+    `- ${id}${tab && tab !== place ? ` · ${tab}` : ""} · ${place} · ${kind}${state ? ` · ${state}` : ""}${title ? ` · ${title}` : ""}`,
+  panesNone: "herdr 里现在没有 pane。",
+  panesFooter: "「看 p2」看屏幕 ·「发 p2 文字」输入 ·「键 p2 esc」按键",
+  viewLabel: (id) => `看 ${id}`,
+  refreshLabel: "刷新",
+  viewHead: (machine, id, place, kind, state) =>
+    `**${machine} · ${id} · ${place} · ${kind}${state ? ` · ${state}` : ""}**`,
+  viewEmpty: "（屏幕是空的）",
+  viewFooter: (id) => `回复这张卡片就是对 ${id} 说话（/看 刷新，/键 esc 按键）`,
+  viewFooterTopic: "在这个话题里回复就是对它说话（/看 刷新，/键 esc 按键）",
+  paneUsage: [
+    "用法：",
+    "- 「列表」：所有 pane",
+    "- 「看 <pane> [行数]」：看它的屏幕",
+    "- 「发 <pane> <文字>」：输入文字并回车",
+    "- 「键 <pane> <键>…」：按键，如 esc、enter、ctrl+c、up、1",
+    "<pane> 可以是 p2、w1:p2、tab 名或目录名。在 agent 的话题里用「/看」「/键 esc」。",
+  ].join("\n"),
+  paneNotFound: (ref) => `没有叫「${ref}」的 pane。发「列表」看看有哪些。`,
+  paneAmbiguous: (ref, ids) => `「${ref}」对得上好几个 pane：${ids.join("、")}。用 pane 的 id 说。`,
+  paneGone: (id) => `${id} 已经不是原来那个程序了，没有送到。发「列表」看看现在有哪些。`,
+  paneNotHere: "看屏幕和操作 pane 只在私聊和工作台里可以。",
+  paneSent: (id) => `已送到 ${id}`,
+  paneKeysSent: (id, keys) => `已在 ${id} 按 ${keys}`,
+  paneWaiting: "它在等你选，没有送到。点一个选项，或者用「键」：",
+  badKey: (reason) => `键名不对，什么都没按（${reason}）。可以用 esc、enter、tab、up、down、ctrl+c、1…`,
 };
 
 const en: Strings = {
@@ -174,6 +228,11 @@ const en: Strings = {
       "- Reply in an agent's topic (in the DM: reply to its notice) to talk to it",
       "- Press a button on a waiting agent's notice to press that key in its dialog",
       '- "status": list all agents',
+      '- "ls": list every pane (plain terminals too), with buttons to view each',
+      '- "view <pane> [lines]": its screen now; reply to that card to talk to that pane',
+      '- "send <pane> <text>": type the text and Enter',
+      '- "keys <pane> <key>…": press keys, e.g. esc, enter, ctrl+c, up, 1',
+      '- In an agent\'s topic: "/view" for its screen, "/keys esc" to press keys',
       '- "workbench": in the DM, create the workbench group again; @-mention me with it in a group to use that group',
       '- "pause" / "resume": stop / resume notices',
     ].join("\n"),
@@ -182,6 +241,35 @@ const en: Strings = {
   testMessage: (machine) =>
     `**${machine} · test**\nagents-io-herdr can send here. When an agent in herdr waits for you or finishes a long turn, you will hear about it here.`,
   noDestination: "No owner yet: run agents-io-herdr setup",
+  terminalKind: "terminal",
+  panesHead: (machine, n) => `**${machine} · ${n} pane${n === 1 ? "" : "s"}**`,
+  paneLine: (id, tab, place, kind, state, title) =>
+    `- ${id}${tab && tab !== place ? ` · ${tab}` : ""} · ${place} · ${kind}${state ? ` · ${state}` : ""}${title ? ` · ${title}` : ""}`,
+  panesNone: "No panes in herdr right now.",
+  panesFooter: '"view p2" for its screen · "send p2 text" to type · "keys p2 esc" to press keys',
+  viewLabel: (id) => `View ${id}`,
+  refreshLabel: "Refresh",
+  viewHead: (machine, id, place, kind, state) =>
+    `**${machine} · ${id} · ${place} · ${kind}${state ? ` · ${state}` : ""}**`,
+  viewEmpty: "(the screen is empty)",
+  viewFooter: (id) => `Reply to this card to talk to ${id} (/view to refresh, /keys esc to press keys)`,
+  viewFooterTopic: "Reply in this topic to talk to it (/view to refresh, /keys esc to press keys)",
+  paneUsage: [
+    "Usage:",
+    '- "ls": every pane',
+    '- "view <pane> [lines]": its screen',
+    '- "send <pane> <text>": type the text and Enter',
+    '- "keys <pane> <key>…": press keys, e.g. esc, enter, ctrl+c, up, 1',
+    '<pane> is p2, w1:p2, a tab\'s name or a directory. In an agent\'s topic: "/view", "/keys esc".',
+  ].join("\n"),
+  paneNotFound: (ref) => `No pane called "${ref}". Send "ls" to see them.`,
+  paneAmbiguous: (ref, ids) => `"${ref}" fits several panes: ${ids.join(", ")}. Name it by its id.`,
+  paneGone: (id) => `${id} runs something else now; not sent. Send "ls" to see what is there.`,
+  paneNotHere: "Screens and pane control only work in the DM and the workbench.",
+  paneSent: (id) => `Sent to ${id}.`,
+  paneKeysSent: (id, keys) => `Pressed ${keys} in ${id}.`,
+  paneWaiting: 'It is waiting for a choice; not sent. Pick one, or use "keys":',
+  badKey: (reason) => `Unknown key, nothing pressed (${reason}). Try esc, enter, tab, up, down, ctrl+c, 1…`,
 };
 
 export const strings = (l: Locale): Strings => (l === "zh" ? zh : en);

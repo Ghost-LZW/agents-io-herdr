@@ -14,8 +14,22 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
 import type { Config } from "./config.ts";
-import { type FeishuApi, FeishuError } from "./feishu.ts";
-import { type Herdr, type HerdrAgent, HerdrError, listAgents, promptAgent, readAgent, sendKeys } from "./herdr.ts";
+import { type FeishuApi, FeishuError, isScopeError } from "./feishu.ts";
+import {
+  type Herdr,
+  type HerdrAgent,
+  HerdrError,
+  type HerdrTab,
+  listAgents,
+  listPanes,
+  listTabs,
+  promptAgent,
+  readAgent,
+  readPane,
+  runInPane,
+  sendKeys,
+  sendPaneKeys,
+} from "./herdr.ts";
 import { type Command, commandOf, type Strings, strings } from "./i18n.ts";
 import {
   ACTION_PREFIX,
@@ -28,6 +42,18 @@ import {
   quietLabel,
   statusMessage,
 } from "./notice.ts";
+import {
+  PANE_KEY_ACTION,
+  type PaneCommand,
+  paneButtons,
+  paneCommandOf,
+  panesMessage,
+  resolvePane,
+  shortId,
+  VIEW_ACTION,
+  VIEW_LINES,
+  viewMessage,
+} from "./panes.ts";
 import type {
   Binding,
   BindingTable,
@@ -97,6 +123,24 @@ interface Destination {
   workbench: boolean;
 }
 
+/** The pane a topic or a screen card is about: the same program only. */
+interface PaneRef {
+  paneId: string;
+  terminalId: string;
+}
+
+/** How an answer about a pane goes back: in a pane's topic, or under the message it answers. */
+interface PaneReply {
+  topic: boolean;
+  /** `about`: a reply to this answer reaches that pane. */
+  send(message: RenderedMessage, about: HerdrAgent | null): Promise<void>;
+  /** It worked: a reaction on the owner's message (`text` when there is none, or it cannot be put). */
+  done(text: string, about: HerdrAgent): Promise<void>;
+}
+
+/** The reaction that says "sent" on the owner's message (Feishu's emoji list). */
+const ACK_EMOJI = "DONE";
+
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const newId = () => randomBytes(6).toString("hex");
 
@@ -143,6 +187,8 @@ export class Bridge {
   #herdrDown = false;
   #lastPrune = 0;
   #noOwnerLogged = false;
+  /** Reactions were refused for want of the scope: answers are words until a restart. */
+  #noReactions = false;
 
   constructor(o: BridgeOptions) {
     this.#o = o;
@@ -486,10 +532,26 @@ export class Bridge {
       return this.#onCode(item, text);
     }
     const thread = this.store.threadOf(env.conversation.id, repliedTo(item), env.conversation.threadId);
-    if (thread) return this.#onReply(item, thread, text);
+    if (thread) {
+      const pc = paneCommandOf(text, true);
+      if (pc && this.#isOwner(item)) return this.#paneCommand(pc, thread, this.#threadReply(item, thread));
+      return this.#onReply(item, thread, text);
+    }
     if (!this.#isOwner(item)) return;
+    // A reply to a screen card (or to an answer under one): that pane.
+    const view = this.store.viewOf(env.conversation.id, repliedTo(item));
+    if (view && this.#paneChat(env.conversation.id)) {
+      const pc = paneCommandOf(text, true) ?? { cmd: "send", ref: null, text };
+      return this.#paneCommand(pc, view, this.#plainReply(item));
+    }
     const cmd = commandOf(text);
     if (cmd) return this.#command(item, cmd);
+    const pc = paneCommandOf(text, false);
+    if (pc) {
+      // A screen says what is on the computer: only where nobody but the owner and the bot reads.
+      if (!this.#paneChat(env.conversation.id)) return this.#answer(item, { text: this.#s.paneNotHere });
+      return this.#paneCommand(pc, null, this.#plainReply(item));
+    }
     const wb = this.store.state.workbench;
     // The owner said something that is neither a reply nor a command: say what works.
     if (
@@ -501,14 +563,27 @@ export class Bridge {
   }
 
   /** A short answer to an inbound message, where it came from (in its topic, quoting it). */
-  async #answer(item: InboundItem, message: RenderedMessage, thread: Thread | null = null, n = 0): Promise<void> {
+  async #answer(
+    item: InboundItem,
+    message: RenderedMessage,
+    thread: Thread | null = null,
+    n = 0,
+    about: HerdrAgent | null = null,
+  ): Promise<void> {
     const route = item.envelope.replyRoute;
     if (!route) return;
     const operationId = `herdr:re:${sha(item.channelRef).slice(0, 32)}:${n}`;
     try {
       const r = await this.#deliver(operationId, route, message);
       if (r.providerMessageId) {
-        this.store.remember(r.providerMessageId, thread?.id ?? null);
+        if (about)
+          this.store.rememberView({
+            messageId: r.providerMessageId,
+            chatId: route.conversationId,
+            paneId: about.pane_id,
+            terminalId: about.terminal_id,
+          });
+        else this.store.remember(r.providerMessageId, thread?.id ?? null);
         this.store.save();
       }
       if (r.status === "rejected") this.#log(`answer ${operationId} refused: ${r.error ?? ""}`);
@@ -728,10 +803,29 @@ export class Bridge {
       return say(s.failed(code));
     }
     this.#log(`prompt to ${t.paneId} (${text.length} chars)`);
-    return say(s.sent);
+    // A reply to the owner's own message reaches the same pane, as a reply to an answer would.
+    this.store.remember(env.id, t.id);
+    this.store.save();
+    return this.#ack(item, () => say(s.sent));
+  }
+
+  /** "Sent": a reaction on the owner's message; `fallback` (words) when it cannot be put. */
+  async #ack(item: InboundItem, fallback: () => Promise<void>): Promise<void> {
+    const feishu = this.#o.feishu;
+    if (!feishu || this.#noReactions) return fallback();
+    try {
+      await feishu.react(item.envelope.id, ACK_EMOJI);
+    } catch (e) {
+      if (isScopeError(e)) {
+        this.#noReactions = true;
+        this.#log("reactions refused (scope im:message.reactions:write_only missing): answering in words");
+      } else this.#log(`reaction failed: ${(e as Error).message}`);
+      return fallback();
+    }
   }
 
   async #onAction(item: InboundItem, actionId: string, messageId: string | null): Promise<void> {
+    if (VIEW_ACTION.test(actionId) || PANE_KEY_ACTION.test(actionId)) return this.#onPaneAction(item, actionId);
     const m = KEY_ACTION.exec(actionId);
     if (!m) return;
     const t = this.store.thread(m[1] as string);
@@ -757,5 +851,157 @@ export class Bridge {
     }
     this.#log(`keys to ${t.paneId}: ${key}`);
     return say(s.pressed(keyLabel(key)));
+  }
+
+  // -- looking at and driving any pane
+
+  /** The owner's DM and the workbench: chats nobody but the owner and the bot read. */
+  #paneChat(chatId: string): boolean {
+    const { owner, workbench } = this.store.state;
+    return chatId === owner?.dmChat || chatId === workbench?.chatId;
+  }
+
+  /** Answers in a pane's topic (or under its notice in the DM). */
+  #threadReply(item: InboundItem, t: Thread, to: string | null = item.envelope.id): PaneReply {
+    const route = (to === item.envelope.id ? item.envelope.replyRoute : null) ?? this.#threadRoute(t, to);
+    const op = `herdr:re:${sha(item.channelRef).slice(0, 32)}:0`;
+    const send = (msg: RenderedMessage) => this.#say(t, route, msg, op);
+    return {
+      topic: t.workbench,
+      send,
+      done: (text) => {
+        if (actionOf(item)) return send({ text });
+        this.store.remember(item.envelope.id, t.id);
+        this.store.save();
+        return this.#ack(item, () => send({ text }));
+      },
+    };
+  }
+
+  /** Answers under the message; `about` makes a reply to the answer reach that pane. */
+  #plainReply(item: InboundItem): PaneReply {
+    const send = (msg: RenderedMessage, about: HerdrAgent | null) => this.#answer(item, msg, null, 0, about);
+    return {
+      topic: false,
+      send,
+      done: (text, about) => {
+        if (actionOf(item)) return send({ text }, about);
+        // A reply to the owner's own message reaches the same pane, as a reply to a screen card does.
+        const env = item.envelope;
+        this.store.rememberView({
+          messageId: env.id,
+          chatId: env.conversation.id,
+          paneId: about.pane_id,
+          terminalId: about.terminal_id,
+        });
+        this.store.save();
+        return this.#ack(item, () => send({ text }, about));
+      },
+    };
+  }
+
+  /**
+   * `ls`, `看`, `发`, `键`. `scope`: the pane of the topic or screen card the command came in
+   * (it must still run the same program); else the command names its pane.
+   */
+  async #paneCommand(pc: PaneCommand, scope: PaneRef | null, reply: PaneReply): Promise<void> {
+    const s = this.#s;
+    const say = (text: string, about: HerdrAgent | null = null) => reply.send({ text }, about);
+    if (pc.cmd === "usage") return say(s.paneUsage);
+    let panes: HerdrAgent[];
+    let tabs: HerdrTab[] = [];
+    try {
+      panes = await listPanes(this.#o.herdr);
+      if (pc.cmd === "panes" || !scope) tabs = await listTabs(this.#o.herdr);
+    } catch (e) {
+      return say(s.herdrDown(e instanceof HerdrError ? e.code : (e as Error).message));
+    }
+    if (pc.cmd === "panes") return reply.send(panesMessage({ machine: this.#o.machine, panes, tabs, s }), null);
+    let pane: HerdrAgent;
+    if (scope) {
+      const p = panes.find((x) => x.pane_id === scope.paneId && x.terminal_id === scope.terminalId);
+      if (!p) return say(s.paneGone(shortId(scope.paneId, panes)));
+      pane = p;
+    } else {
+      const r = resolvePane(pc.ref ?? "", panes, tabs);
+      if (!r.ok) {
+        const ids = r.candidates.map((p) => p.pane_id);
+        return say(r.candidates.length ? s.paneAmbiguous(pc.ref ?? "", ids) : s.paneNotFound(pc.ref ?? ""));
+      }
+      pane = r.pane;
+    }
+    const id = shortId(pane.pane_id, panes);
+    if (pc.cmd === "view") return this.#showPane(pane, id, pc.lines ?? VIEW_LINES, reply);
+    if (this.paused) return say(s.paused);
+    try {
+      if (pc.cmd === "keys") {
+        await sendPaneKeys(this.#o.herdr, pane.pane_id, pc.keys);
+        this.#log(`keys to ${pane.pane_id}: ${pc.keys.length}`);
+        return reply.done(s.paneKeysSent(id, pc.keys.join(" ")), pane);
+      }
+      if (!pc.text) return say(s.textOnly);
+      if (pc.text.length > PROMPT_MAX) return say(s.tooLong(PROMPT_MAX));
+      if (pane.agent) {
+        if (pane.agent_status === "blocked") return this.#showPane(pane, id, VIEW_LINES, reply, s.paneWaiting);
+        await promptAgent(this.#o.herdr, pane.pane_id, pc.text);
+      } else {
+        await runInPane(this.#o.herdr, pane.pane_id, pc.text);
+      }
+      this.#log(`text to ${pane.pane_id} (${pc.text.length} chars)`);
+      return reply.done(s.paneSent(id), pane);
+    } catch (e) {
+      const code = e instanceof HerdrError ? e.code : "error";
+      if (code === "agent_blocked") return this.#showPane(pane, id, VIEW_LINES, reply, s.paneWaiting);
+      if (code === "invalid_key") return say(s.badKey((e as Error).message));
+      this.#log(`input to ${pane.pane_id} failed: ${code}`);
+      return say(s.failed(code));
+    }
+  }
+
+  /** A pane's screen as a card (a dialog's choices as buttons); `note` goes above it. */
+  async #showPane(pane: HerdrAgent, id: string, lines: number, reply: PaneReply, note?: string): Promise<void> {
+    let screen: string;
+    try {
+      screen = tailOf(await readPane(this.#o.herdr, pane.pane_id, lines + 20), lines);
+    } catch (e) {
+      return reply.send({ text: this.#s.herdrDown(e instanceof HerdrError ? e.code : (e as Error).message) }, null);
+    }
+    const options = pane.agent_status === "blocked" ? optionsOf(screen) : [];
+    const msg = viewMessage({
+      machine: this.#o.machine,
+      pane,
+      id,
+      screen,
+      s: this.#s,
+      footer: reply.topic ? this.#s.viewFooterTopic : this.#s.viewFooter(id),
+      actions: pane.agent_status === "blocked" ? paneButtons(pane.terminal_id, options, this.#s) : [],
+    });
+    this.#log(`screen of ${pane.pane_id} (${lines} lines)`);
+    return reply.send(note ? { ...msg, text: `${note}\n${msg.text}` } : msg, pane);
+  }
+
+  /** A screen card's buttons: refresh it, or press a dialog's key in that terminal. */
+  async #onPaneAction(item: InboundItem, actionId: string): Promise<void> {
+    const env = item.envelope;
+    const chatId = env.conversation.id;
+    if (!this.#isOwner(item)) return this.#answer(item, { text: this.#s.notOwner });
+    if (!this.#paneChat(chatId)) return this.#log("a pane button from another chat");
+    const messageId = actionOf(item)?.messageId ?? null;
+    const t = messageId ? this.store.threadOf(chatId, [messageId], undefined) : null;
+    const reply = t ? this.#threadReply(item, t, messageId) : this.#plainReply(item);
+    const view = VIEW_ACTION.exec(actionId);
+    const key = PANE_KEY_ACTION.exec(actionId);
+    const terminalId = (view?.[1] ?? key?.[1]) as string;
+    let panes: HerdrAgent[];
+    try {
+      panes = await listPanes(this.#o.herdr);
+    } catch (e) {
+      return reply.send({ text: this.#s.herdrDown(e instanceof HerdrError ? e.code : (e as Error).message) }, null);
+    }
+    const pane = panes.find((p) => p.terminal_id === terminalId);
+    if (!pane) return reply.send({ text: this.#s.gone }, null);
+    const scope = { paneId: pane.pane_id, terminalId };
+    if (view) return this.#paneCommand({ cmd: "view", ref: null, lines: null }, scope, reply);
+    return this.#paneCommand({ cmd: "keys", ref: null, keys: [key?.[2] as string] }, scope, reply);
   }
 }

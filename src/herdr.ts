@@ -20,6 +20,16 @@ export interface HerdrAgent {
   foreground_cwd?: string | null;
   focused: boolean;
   state_change_seq?: number;
+  tab_id?: string;
+  workspace_id?: string;
+}
+
+/** One row of `tab.list` (the fields this project reads). */
+export interface HerdrTab {
+  tab_id: string;
+  workspace_id: string;
+  number: number;
+  label: string;
 }
 
 export class HerdrError extends Error {
@@ -105,4 +115,35 @@ export async function promptAgent(h: Herdr, target: string, text: string): Promi
 
 export async function sendKeys(h: Herdr, target: string, keys: string[]): Promise<void> {
   await h.call("agent.send_keys", { target, keys });
+}
+
+/** Every pane, agent or not (the same rows as `agent.list`, `agent` null for a plain terminal). */
+export async function listPanes(h: Herdr): Promise<HerdrAgent[]> {
+  const r = await h.call<{ panes: HerdrAgent[] }>("pane.list", {});
+  return r.panes ?? [];
+}
+
+export async function listTabs(h: Herdr): Promise<HerdrTab[]> {
+  const r = await h.call<{ tabs: HerdrTab[] }>("tab.list", {});
+  return r.tabs ?? [];
+}
+
+export async function readPane(h: Herdr, paneId: string, lines: number): Promise<string> {
+  const r = await h.call<{ read: { text: string } }>("pane.read", {
+    pane_id: paneId,
+    source: "recent_unwrapped",
+    lines,
+  });
+  return r.read?.text ?? "";
+}
+
+/** Literal text, then Enter (a plain terminal: no bracketed paste, no dialog check). */
+export async function runInPane(h: Herdr, paneId: string, text: string): Promise<void> {
+  await h.call("pane.send_text", { pane_id: paneId, text });
+  await h.call("pane.send_keys", { pane_id: paneId, keys: ["enter"] });
+}
+
+/** herdr checks every key name (`invalid_key`) before it writes anything. */
+export async function sendPaneKeys(h: Herdr, paneId: string, keys: string[]): Promise<void> {
+  await h.call("pane.send_keys", { pane_id: paneId, keys });
 }

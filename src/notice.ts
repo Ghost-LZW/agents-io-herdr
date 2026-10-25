@@ -30,8 +30,8 @@ export const keyAction = (threadId: string, key: string) => `${ACTION_PREFIX}key
 export const KEY_ACTION = /^herdr:key:([0-9a-z]{6,32}):([1-9]|esc)$/;
 export const keyLabel = (key: string) => (key === "esc" ? "Esc" : key);
 
-const BUTTON_LABEL_MAX = 20;
-const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+export const BUTTON_LABEL_MAX = 20;
+export const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /** A blocked dialog's choices as buttons (`1 Yes`), and Esc. */
 export function buttons(threadId: string, options: DialogOption[], s: Strings): RenderedMessage["actions"] {
@@ -44,7 +44,7 @@ export function buttons(threadId: string, options: DialogOption[], s: Strings): 
   ];
 }
 
-const fence = (t: string) => (t ? `\n\`\`\`\n${t.replace(/```/g, "ˋˋˋ")}\n\`\`\`` : "");
+export const fence = (t: string) => (t ? `\n\`\`\`\n${t.replace(/```/g, "ˋˋˋ")}\n\`\`\`` : "");
 
 const clock = (ms: number, timeZone: string) =>
   new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(ms);
