@@ -341,6 +341,8 @@ export class FakeHerdr {
   calls: [string, Record<string, unknown>][] = [];
   /** Error code for a method, e.g. `agent.prompt` → `agent_blocked`. */
   errors = new Map<string, string>();
+  /** Panes whose history herdr cannot read now (a full-screen program in a dialog): only `visible` works. */
+  visibleOnly = new Set<string>();
   #server: Server;
 
   constructor(socket: string) {
@@ -355,9 +357,14 @@ export class FakeHerdr {
         const req = JSON.parse(buf.slice(0, nl)) as { id: string; method: string; params: Record<string, unknown> };
         this.calls.push([req.method, req.params]);
         const bad = req.method.endsWith("send_keys") && this.#result(req.method, req.params) === null;
-        const err = bad ? "invalid_key" : this.errors.get(req.method);
+        const pane = String(req.params.target ?? req.params.pane_id ?? "");
+        const history =
+          req.method.endsWith(".read") && req.params.source !== "visible" && this.visibleOnly.has(pane)
+            ? `cannot read ${req.params.lines} lines while ${pane} is blocked: its alternate-screen history can only be captured by scrolling while idle. Wait and retry, or use --source visible`
+            : null;
+        const err = bad ? "invalid_key" : history ? "read_unavailable" : this.errors.get(req.method);
         const answer = err
-          ? { id: req.id, error: { code: err, message: `${req.method}: ${err}` } }
+          ? { id: req.id, error: { code: err, message: history ?? `${req.method}: ${err}` } }
           : { id: req.id, result: this.#result(req.method, req.params) };
         c.end(`${JSON.stringify(answer)}\n`);
       });

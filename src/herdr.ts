@@ -104,10 +104,22 @@ export async function listAgents(h: Herdr): Promise<HerdrAgent[]> {
   return r.agents ?? [];
 }
 
-/** The pane's recent output, soft wraps joined, without colors (the read source is `recent_unwrapped`). */
+/**
+ * herdr cannot read the history of a full-screen program while it shows a dialog (it scrolls to
+ * capture it, only while idle): what is on the screen then, which is where the dialog is.
+ */
+async function withVisible(read: (source: string) => Promise<{ read: { text: string } }>): Promise<string> {
+  try {
+    return (await read("recent_unwrapped")).read?.text ?? "";
+  } catch (e) {
+    if (!(e instanceof HerdrError) || !/alternate-screen|visible/i.test(e.message)) throw e;
+    return (await read("visible")).read?.text ?? "";
+  }
+}
+
+/** The pane's recent output, soft wraps joined, without colors (`recent_unwrapped`; the screen while blocked). */
 export async function readAgent(h: Herdr, target: string, lines: number): Promise<string> {
-  const r = await h.call<{ read: { text: string } }>("agent.read", { target, source: "recent_unwrapped", lines });
-  return r.read?.text ?? "";
+  return withVisible((source) => h.call("agent.read", { target, source, lines }));
 }
 
 /** Text and Enter as one submission; refused (`agent_blocked`) while a dialog is open. */
@@ -131,12 +143,7 @@ export async function listTabs(h: Herdr): Promise<HerdrTab[]> {
 }
 
 export async function readPane(h: Herdr, paneId: string, lines: number): Promise<string> {
-  const r = await h.call<{ read: { text: string } }>("pane.read", {
-    pane_id: paneId,
-    source: "recent_unwrapped",
-    lines,
-  });
-  return r.read?.text ?? "";
+  return withVisible((source) => h.call("pane.read", { pane_id: paneId, source, lines }));
 }
 
 /** Literal text, then Enter (a plain terminal: no bracketed paste, no dialog check). */
