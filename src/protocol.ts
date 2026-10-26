@@ -23,6 +23,35 @@ export interface RenderedMessage {
   sections?: { kind: "body" | "details" | "status" | "footer"; text: string; collapsed?: boolean }[];
   /** Clicks come back as inbound `event` content named `action` with `{ actionId, messageId }`. */
   actions?: { id: string; label: string; style?: "primary" | "danger" }[];
+  /** A turn's process, drawn natively (lark-bot: a thinking bubble and a process card). */
+  progress?: ProgressView;
+}
+
+/** One entry of a turn's visible process (agents-io `ProgressStep`). */
+export type ProgressStep =
+  | { kind: "reasoning"; id: string; text: string; done: boolean }
+  | { kind: "narration"; id: string; text: string }
+  | {
+      kind: "tool";
+      itemId: string;
+      type: "command" | "file_change" | "web_search" | "subagent" | "mcp_tool" | "tool";
+      title: string;
+      status: "running" | "completed" | "failed" | "declined" | "skipped";
+      inputSummary?: string;
+      resultPreview?: string;
+      isError?: boolean;
+    };
+
+/** A turn as it stands (agents-io `ProgressView`); each update replaces the previous one. */
+export interface ProgressView {
+  turnId: string;
+  status: "running" | "requires_action" | "completed" | "interrupted" | "failed" | "ambiguous";
+  headline?: string;
+  steps: ProgressStep[];
+  answer: string;
+  answerFinal: boolean;
+  startedAt?: number;
+  endedAt?: number;
 }
 
 export type ContentBlock =

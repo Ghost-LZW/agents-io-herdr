@@ -31,12 +31,14 @@ import {
   sendPaneKeys,
 } from "./herdr.ts";
 import { type Command, commandOf, type Strings, strings } from "./i18n.ts";
+import { progressOf } from "./live.ts";
 import {
   ACTION_PREFIX,
   agentName,
   buttons,
   KEY_ACTION,
   keyLabel,
+  liveMessage,
   noticeMessages,
   placeOf,
   quietLabel,
@@ -63,10 +65,12 @@ import type {
   RenderedMessage,
   ReplyRoute,
 } from "./protocol.ts";
+import { redact } from "./redact.ts";
 import { type DialogOption, optionsOf, summaryOf, tailOf } from "./screen.ts";
 import {
   clearSetup,
   hashCode,
+  type LiveCard,
   normalizeCode,
   readSetup,
   SETUP_MAX_ATTEMPTS,
@@ -76,7 +80,7 @@ import {
 } from "./store.ts";
 import { minuteOfDay } from "./system.ts";
 import type { TranscriptSource, Turn } from "./transcript.ts";
-import { type Notice, paneKey, Watcher } from "./watch.ts";
+import { inQuiet, type Notice, type PaneView, paneKey, Watcher } from "./watch.ts";
 
 export const CHANNEL = "lark-bot";
 export const CONSUMER = "herdr";
@@ -195,6 +199,10 @@ export class Bridge {
   #noOwnerLogged = false;
   /** Reactions were refused for want of the scope: answers are words until a restart. */
   #noReactions = false;
+  /** Live cards: when each was last updated and what it showed (by turn id). */
+  #liveShown = new Map<string, { at: number; json: string }>();
+  /** Panes whose live card was settled lately, by pane key → chat: a done notice there points at it. */
+  #liveSettled = new Map<string, { chatId: string; at: number }>();
 
   constructor(o: BridgeOptions) {
     this.#o = o;
@@ -315,6 +323,7 @@ export class Bridge {
         minuteOfDay: minuteOfDay(new Date(now), this.#c.timeZone),
       });
       await this.#closeGone(agents);
+      await this.#live(agents, now);
       const paused = this.paused;
       for (const n of notices) {
         this.#log(
@@ -435,49 +444,253 @@ export class Bridge {
         return true;
       }
       const a = n.agent;
-      const key = paneKey(a);
-      const thread = st.openThread(key, d.chatId);
+      const thread = st.openThread(paneKey(a), d.chatId);
       const threadId = thread?.id ?? p.newThreadId;
       const [msg, ...more] = noticeMessages(n, this.#view(p, d, threadId)) as [RenderedMessage, ...RenderedMessage[]];
-      const route = thread ? this.#threadRoute(thread) : this.#route(d.chatId);
-      const r = await this.#deliver(operationId, route, msg);
+      const { r, thread: t } = await this.#toPane(a, d, msg, operationId, threadId, now);
       if (r.status === "rejected") {
         this.#log(`notice for ${a.pane_id} refused in ${d.workbench ? "the workbench" : "the DM"}: ${r.error ?? ""}`);
         continue;
       }
-      const mid = r.providerMessageId;
-      let t = thread;
-      if (!t && mid) {
-        t = {
-          id: threadId,
-          paneKey: key,
-          paneId: a.pane_id,
-          terminalId: a.terminal_id,
-          agent: agentName(a),
-          place: placeOf(a),
-          chatId: d.chatId,
-          workbench: d.workbench,
-          rootMessageId: mid,
-          threadId: d.workbench ? (r.providerThreadId ?? null) : null,
-          options: [],
-          openedAt: now,
-          lastAt: now,
-          closedAt: null,
-        };
-        st.state.threads.push(t);
-      }
-      if (t) {
-        t.lastAt = now;
-        if (n.kind === "blocked") t.options = p.options;
-        if (t.workbench && !t.threadId && r.providerThreadId) t.threadId = r.providerThreadId;
-        if (mid) st.remember(mid, t.id);
-      }
+      if (t && n.kind === "blocked") t.options = p.options;
       st.save();
       if (r.status === "unknown") this.#log(`notice ${operationId}: outcome unknown (not sent again)`);
       if (t && more.length) await this.#sendMore(t, operationId, more);
       return true;
     }
     return false;
+  }
+
+  /**
+   * A message about a pane into its thread in `d`: a reply in its open thread, or the root of a
+   * new one (`threadId`). The thread is recorded once the message is there (not saved here).
+   */
+  async #toPane(
+    a: HerdrAgent,
+    d: Destination,
+    msg: RenderedMessage,
+    operationId: string,
+    threadId: string,
+    now: number,
+  ): Promise<{ r: DeliverResult; thread: Thread | null; route: ReplyRoute }> {
+    const st = this.store;
+    const key = paneKey(a);
+    const thread = st.openThread(key, d.chatId);
+    const route = thread ? this.#threadRoute(thread) : this.#route(d.chatId);
+    const r = await this.#deliver(operationId, route, msg);
+    if (r.status === "rejected") return { r, thread, route };
+    const mid = r.providerMessageId;
+    let t = thread;
+    if (!t && mid) {
+      t = {
+        id: threadId,
+        paneKey: key,
+        paneId: a.pane_id,
+        terminalId: a.terminal_id,
+        agent: agentName(a),
+        place: placeOf(a),
+        chatId: d.chatId,
+        workbench: d.workbench,
+        rootMessageId: mid,
+        threadId: d.workbench ? (r.providerThreadId ?? null) : null,
+        options: [],
+        openedAt: now,
+        lastAt: now,
+        closedAt: null,
+      };
+      st.state.threads.push(t);
+    }
+    if (t) {
+      t.lastAt = now;
+      if (t.workbench && !t.threadId && r.providerThreadId) t.threadId = r.providerThreadId;
+      if (mid) st.remember(mid, t.id);
+    }
+    return { r, thread: t, route };
+  }
+
+  // ---- live cards ----------------------------------------------------------------------------
+
+  /** The daemon can edit what this host sent (agents-io `deliver.update`). */
+  #canUpdate(): boolean {
+    return this.#o.aio.hello?.features?.includes("deliver.update") ?? false;
+  }
+
+  /**
+   * Live cards, once per tick: a long working stretch gets one (the transcript's process as
+   * Feishu's thinking bubble), it follows the transcript while the stretch lasts, and is
+   * settled with the answer when it ends (or the pane goes).
+   */
+  async #live(agents: HerdrAgent[], now: number): Promise<void> {
+    const cfg = this.#c.live;
+    const src = this.#o.transcripts;
+    if (!cfg || !src || !this.#o.aio.online || !this.#canUpdate()) return;
+    for (const [k, v] of this.#liveSettled) if (now - v.at > 10 * 60_000) this.#liveSettled.delete(k);
+    const views = new Map(this.#watcher.snapshot().map((v) => [v.key, v]));
+    const byKey = new Map(agents.filter((a) => a.agent).map((a) => [paneKey(a), a]));
+    const st = this.store.state;
+    for (const card of [...st.live]) {
+      const a = byKey.get(card.paneKey);
+      const v = views.get(card.paneKey);
+      if (!a || !v || v.workingSince !== card.stretch) await this.#settleLive(card, a ?? null, now);
+      else if (now - (this.#liveShown.get(card.turnId)?.at ?? 0) >= cfg.everyMs) await this.#updateLive(card, a, now);
+    }
+    if (this.paused || inQuiet(this.#c.rules, minuteOfDay(new Date(now), this.#c.timeZone))) return;
+    const idleMs = this.#o.idleMs?.() ?? null;
+    for (const a of byKey.values()) {
+      const v = views.get(paneKey(a));
+      if (!v || v.workingSince === null || now - v.workingSince < cfg.afterMs) continue;
+      if (a.agent_status !== "working" && a.agent_status !== "blocked") continue;
+      if (st.live.some((c) => c.paneKey === v.key)) continue;
+      // Someone looking at the pane does not need it on the phone.
+      if (idleMs !== null && idleMs < this.#c.rules.presentIdleMs && a.focused) continue;
+      await this.#openLive(a, v, now);
+    }
+  }
+
+  #liveStatus(a: HerdrAgent | null): "running" | "requires_action" {
+    return a?.agent_status === "blocked" ? "requires_action" : "running";
+  }
+
+  async #openLive(a: HerdrAgent, v: PaneView, now: number): Promise<void> {
+    let turn: Turn | null = null;
+    try {
+      turn = (await this.#o.transcripts?.turn(a)) ?? null;
+    } catch (e) {
+      this.#log(`reading the transcript of ${a.pane_id} failed: ${(e as Error).message}`);
+    }
+    // Nothing to follow (no transcript, or not written yet): the done notice will do.
+    if (!turn) return;
+    const stretch = v.workingSince as number;
+    const turnId = `herdr-${sha(`${this.#o.machine}\n${v.key}\n${stretch}`).slice(0, 24)}`;
+    const operationId = `herdr:live:${turnId}`;
+    const progress = progressOf(turn, { turnId, status: this.#liveStatus(a), startedAt: stretch });
+    for (const d of this.#destinations()) {
+      const msg = liveMessage(a, turn, { machine: this.#o.machine, s: this.#s, topic: d.workbench, progress });
+      const threadId = this.store.openThread(v.key, d.chatId)?.id ?? newId();
+      try {
+        const { r, route } = await this.#toPane(
+          a,
+          d,
+          msg,
+          `${operationId}:${sha(d.chatId).slice(0, 8)}`,
+          threadId,
+          now,
+        );
+        if (r.status === "rejected" || !r.providerMessageId) {
+          this.#log(
+            `live card for ${a.pane_id} refused in ${d.workbench ? "the workbench" : "the DM"}: ${r.error ?? ""}`,
+          );
+          continue;
+        }
+        const card: LiveCard = {
+          paneKey: v.key,
+          paneId: a.pane_id,
+          stretch,
+          turnId,
+          threadId,
+          messageId: r.providerMessageId,
+          chatId: route.conversationId,
+          replyTo: route.replyToMessageId ?? null,
+          topic: route.threadId ?? null,
+          operationId,
+          seq: 0,
+          startedAt: now,
+        };
+        this.store.state.live.push(card);
+        this.store.save();
+        this.#liveShown.set(turnId, { at: now, json: JSON.stringify(progress.steps) });
+        this.#log(`live card for ${a.pane_id} opened`);
+        return;
+      } catch (e) {
+        this.#log(`live card for ${a.pane_id} not sent: ${(e as Error).message}`);
+        return;
+      }
+    }
+  }
+
+  #liveRoute(c: LiveCard): ReplyRoute {
+    return this.#route(c.chatId, {
+      ...(c.topic ? { threadId: c.topic } : {}),
+      ...(c.replyTo ? { replyToMessageId: c.replyTo } : {}),
+    });
+  }
+
+  async #update(c: LiveCard, message: RenderedMessage, final: boolean): Promise<{ status: string; error?: string }> {
+    c.seq++;
+    return await this.#o.aio.request<{ status: string; error?: string }>(
+      "deliver.update",
+      {
+        operationId: final ? `${c.operationId}:final` : `${c.operationId}:u${c.seq}`,
+        route: this.#liveRoute(c),
+        providerMessageId: c.messageId,
+        message,
+        sequence: c.seq,
+        ...(final ? { final: true } : {}),
+      },
+      60_000,
+    );
+  }
+
+  async #updateLive(c: LiveCard, a: HerdrAgent, now: number): Promise<void> {
+    let turn: Turn | null = null;
+    try {
+      turn = (await this.#o.transcripts?.turn(a)) ?? null;
+    } catch {
+      return;
+    }
+    const progress = progressOf(turn, { turnId: c.turnId, status: this.#liveStatus(a), startedAt: c.stretch });
+    const json = JSON.stringify([progress.status, progress.steps]);
+    const shown = this.#liveShown.get(c.turnId);
+    this.#liveShown.set(c.turnId, { at: now, json: shown?.json ?? "" });
+    if (shown?.json === json) return;
+    const msg = liveMessage(a, turn, { machine: this.#o.machine, s: this.#s, topic: !!c.topic, progress });
+    try {
+      const r = await this.#update(c, msg, false);
+      if (r.status === "rejected") this.#log(`live card for ${c.paneId}: update refused: ${r.error ?? ""}`);
+      this.#liveShown.set(c.turnId, { at: now, json });
+    } catch (e) {
+      this.#log(`live card for ${c.paneId}: update failed: ${(e as Error).message}`);
+    }
+  }
+
+  /** The stretch ended (or the pane went): the card's last state, its answer and the bubble closed. */
+  async #settleLive(c: LiveCard, a: HerdrAgent | null, now: number): Promise<void> {
+    let turn: Turn | null = null;
+    try {
+      if (a) turn = (await this.#o.transcripts?.turn(a)) ?? null;
+    } catch {
+      // the card settles with what it showed
+    }
+    // A card from before a restart: this process did not see its stretch end, so it cannot say it finished.
+    const seen = this.#liveShown.has(c.turnId);
+    const answer = !a ? this.#s.ended : !seen ? this.#s.liveLost : turn?.answer.trim() ? redact(turn.answer).text : "";
+    const progress = progressOf(turn, {
+      turnId: c.turnId,
+      status: a && seen ? "completed" : "interrupted",
+      startedAt: c.stretch,
+      endedAt: now,
+      answer,
+    });
+    const msg = liveMessage(a ?? ({ pane_id: c.paneId, agent: null } as HerdrAgent), turn, {
+      machine: this.#o.machine,
+      s: this.#s,
+      topic: !!c.topic,
+      progress,
+    });
+    try {
+      const r = await this.#update(c, msg, true);
+      if (r.status === "rejected") this.#log(`live card for ${c.paneId}: settling refused: ${r.error ?? ""}`);
+    } catch (e) {
+      // The daemon is away: try again next tick.
+      this.#log(`live card for ${c.paneId}: settling failed: ${(e as Error).message}`);
+      return;
+    }
+    const st = this.store.state;
+    st.live = st.live.filter((x) => x !== c);
+    this.store.save();
+    this.#liveShown.delete(c.turnId);
+    this.#liveSettled.set(c.paneKey, { chatId: c.chatId, at: now });
+    this.#log(`live card for ${c.paneId} settled`);
   }
 
   /** What did not fit on the notice, after it in its topic; a part that cannot be sent is logged and skipped. */
@@ -505,6 +718,7 @@ export class Bridge {
       topic: d.workbench,
       threadId,
       options: p.options,
+      live: p.notice.kind !== "overnight" && this.#liveSettled.get(paneKey(p.notice.agent))?.chatId === d.chatId,
     };
   }
 

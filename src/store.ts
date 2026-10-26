@@ -45,6 +45,24 @@ export interface Thread {
   closedAt: number | null;
 }
 
+/** A running turn's live card (a process card and thinking bubble updated while it works). */
+export interface LiveCard {
+  paneKey: string;
+  paneId: string;
+  /** The working stretch it shows (`Watcher` `workingSince`). */
+  stretch: number;
+  turnId: string;
+  threadId: string;
+  messageId: string;
+  /** The chat it is in and how to reach it (`ReplyRoute` fields). */
+  chatId: string;
+  replyTo: string | null;
+  topic: string | null;
+  operationId: string;
+  seq: number;
+  startedAt: number;
+}
+
 export interface State {
   v: 1;
   owner: Owner | null;
@@ -56,6 +74,8 @@ export interface State {
   messages: [string, string | null][];
   /** Screen cards (and answers under them) → the pane they show, oldest first, capped. */
   views: View[];
+  /** Live cards of turns still running (settled ones are removed). */
+  live: LiveCard[];
   /** Inbound items already taken (`channelRef`), oldest first, capped: the queue delivers at least once. */
   handled: string[];
 }
@@ -82,6 +102,7 @@ export const emptyState = (): State => ({
   threads: [],
   messages: [],
   views: [],
+  live: [],
   handled: [],
 });
 

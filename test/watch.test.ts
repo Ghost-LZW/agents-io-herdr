@@ -210,8 +210,8 @@ describe("Watcher", () => {
       minuteOfDay: NOON,
     });
     expect(w.snapshot()).toEqual([
-      { key: "w1:p1|term_1", status: "blocked", since: 10 * S, sinceStart: false },
-      { key: "w1:p2|term_2", status: "idle", since: 10 * S, sinceStart: false },
+      { key: "w1:p1|term_1", status: "blocked", since: 10 * S, sinceStart: false, workingSince: 0 },
+      { key: "w1:p2|term_2", status: "idle", since: 10 * S, sinceStart: false, workingSince: null },
     ]);
   });
 });

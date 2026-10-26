@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { strings } from "../src/i18n.ts";
+import { progressOf } from "../src/live.ts";
 import { noticeMessages, pages, processPages } from "../src/notice.ts";
 import { claudeTurn, codexTurn, subjectOf, transcriptSource } from "../src/transcript.ts";
 import { tempDir } from "./fakes.ts";
@@ -190,5 +191,60 @@ describe("noticeMessages", () => {
     expect(out.length).toBeLessThanOrEqual(3);
     expect(out[0]).toMatch(/^_\(the first \d+ steps are left out/);
     expect(out.at(-1)).toContain("step 199");
+  });
+});
+
+describe("progressOf", () => {
+  const turn = {
+    prompt: "p",
+    steps: [
+      { kind: "thinking" as const, text: "Hmm." },
+      { kind: "tool" as const, id: "c1", name: "Edit", subject: "/a/b.ts", result: "ok", error: false },
+      { kind: "tool" as const, id: "c2", name: "Bash", subject: "npm test", result: null, error: false },
+    ],
+    answer: "So far so good.",
+    truncated: false,
+  };
+
+  it("while running: the text after the last tool is narration, an open tool runs, ids are stable", () => {
+    const a = progressOf(turn, { turnId: "x", status: "running", startedAt: 1 });
+    expect(a).toMatchObject({ status: "running", answer: "", answerFinal: false });
+    expect(a.steps.map((s) => s.kind)).toEqual(["reasoning", "tool", "tool", "narration"]);
+    expect(a.steps[1]).toMatchObject({ type: "file_change", title: "Edit: /a/b.ts", status: "completed" });
+    expect(a.steps[2]).toMatchObject({ type: "command", status: "running" });
+    const b = progressOf(
+      { ...turn, steps: [...turn.steps, { kind: "text", text: "more" }] },
+      { turnId: "x", status: "running", startedAt: 1 },
+    );
+    expect(
+      b.steps[0]?.kind === "reasoning" && a.steps[0]?.kind === "reasoning" && b.steps[0].id === a.steps[0].id,
+    ).toBe(true);
+  });
+
+  it("settled: the answer is the card's text, every tool settles", () => {
+    const p = progressOf(turn, { turnId: "x", status: "completed", startedAt: 1, endedAt: 2, answer: "Done." });
+    expect(p).toMatchObject({ status: "completed", answer: "Done.", answerFinal: true, endedAt: 2 });
+    expect(p.steps.map((s) => s.kind)).toEqual(["reasoning", "tool", "tool"]);
+    expect(p.steps[2]).toMatchObject({ status: "completed" });
+  });
+
+  it("redacts what it shows", () => {
+    const p = progressOf(
+      {
+        ...turn,
+        steps: [
+          {
+            kind: "tool",
+            id: "c",
+            name: "Bash",
+            subject: "curl -H 'Authorization: Bearer abcdefghijklmnop1234'",
+            result: null,
+            error: false,
+          },
+        ],
+      },
+      { turnId: "x", status: "running", startedAt: 1 },
+    );
+    expect(JSON.stringify(p)).not.toContain("abcdefghijklmnop1234");
   });
 });

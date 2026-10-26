@@ -354,12 +354,20 @@ export function transcriptSource(o: { home: string; codexHome?: string }): Trans
     }
     return path ? { path, kind } : null;
   };
+  // A live card asks every few seconds: an unchanged file is not read again.
+  const last = new Map<string, { size: number; mtime: number; turn: Turn | null }>();
   return {
     async turn(a) {
       const f = locate(a);
       if (!f) return null;
+      const st = statSync(f.path);
+      const prev = last.get(f.path);
+      if (prev && prev.size === st.size && prev.mtime === st.mtimeMs) return prev.turn;
       const { text, cut } = tail(f.path);
-      return f.kind === "claude" ? claudeTurn(text, cut) : codexTurn(text, cut);
+      const turn = f.kind === "claude" ? claudeTurn(text, cut) : codexTurn(text, cut);
+      last.set(f.path, { size: st.size, mtime: st.mtimeMs, turn });
+      if (last.size > 64) last.delete(last.keys().next().value as string);
+      return turn;
     },
   };
 }
