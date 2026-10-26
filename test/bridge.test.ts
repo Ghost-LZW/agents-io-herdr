@@ -321,6 +321,16 @@ describe("notices and answers", () => {
     expect(w.store.state.threads).toHaveLength(1);
   });
 
+  it("reads the screen when herdr cannot read a blocked full-screen agent's history: the dialog and its buttons", async () => {
+    w.herdr.visibleOnly.add("w1:p1");
+    await blockedNotice(w);
+    const n = w.aio.delivered.at(-1);
+    expect(n?.message.text).toContain("❯ 1. Yes");
+    expect(n?.message.actions?.[0]).toMatchObject({ label: "1 Yes" });
+    const reads = w.herdr.calls.filter(([m]) => m === "agent.read").map(([, p]) => p.source);
+    expect(reads).toEqual(["recent_unwrapped", "visible"]);
+  });
+
   it("types the owner's reply in the topic into that pane, once, and marks the message done", async () => {
     await blockedNotice(w);
     await run(w, 2, "idle");
