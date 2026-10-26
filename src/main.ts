@@ -25,6 +25,7 @@ import type { DeliverResult, HostHelloResult, ReplyRoute } from "./protocol.ts";
 import { appCredentials, CredentialError, lookup, realSecretSource, type SecretSource } from "./secrets.ts";
 import { clearSetup, newCode, readSetup, SETUP_TTL_MS, Store, writePrivate, writeSetup } from "./store.ts";
 import { type Exec, idleMs, machineName, realExec } from "./system.ts";
+import { transcriptSource } from "./transcript.ts";
 
 export const HELP = `agents-io-herdr — Feishu/Lark notices and replies for coding agents in herdr
 
@@ -192,6 +193,7 @@ async function run(io: Io, c: Config): Promise<number> {
     aio,
     feishu,
     store,
+    transcripts: transcriptSource({ home: io.home, ...(io.env.CODEX_HOME ? { codexHome: io.env.CODEX_HOME } : {}) }),
     now: io.now,
     idleMs: () => idleMs(io.exec, io.platform),
     log,

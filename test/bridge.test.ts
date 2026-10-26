@@ -11,6 +11,7 @@ import type { Config } from "../src/config.ts";
 import { FeishuApi } from "../src/feishu.ts";
 import { herdrClient } from "../src/herdr.ts";
 import { Store, writeSetup } from "../src/store.ts";
+import type { TranscriptSource, Turn } from "../src/transcript.ts";
 import {
   ACCOUNT,
   agent,
@@ -49,7 +50,7 @@ interface World {
 }
 
 async function world(
-  o: { chat?: Parameters<typeof fakeFeishu>[0]; config?: Record<string, unknown> } = {},
+  o: { chat?: Parameters<typeof fakeFeishu>[0]; config?: Record<string, unknown>; transcripts?: TranscriptSource } = {},
 ): Promise<World> {
   const tmp = tempDir();
   const cfg = testConfig(tmp.dir, { herdrSocket: join(tmp.dir, "h.sock"), ...o.config });
@@ -87,6 +88,7 @@ async function world(
     now: () => clock.now,
     idleMs: () => null,
     log: (s) => logs.push(s),
+    ...(o.transcripts ? { transcripts: o.transcripts } : {}),
   });
   client.start();
   expect(await client.waitOnline(3000)).toBe(true);
@@ -749,5 +751,47 @@ describe("looking at and driving any pane", () => {
     expect(w.aio.delivered.at(-1)?.message.text).toBe("Only this machine's owner can answer this agent.");
     await send(w, { chat: "oc_test_group", action: { actionId: "herdr:pk:term_3:1", messageId: "om_x" } });
     expect(w.herdr.actions).toEqual([]);
+  });
+});
+
+describe("notices from the transcript", () => {
+  const answer = Array.from({ length: 400 }, (_, i) => `Line ${i} of the answer, with some words in it.`).join("\n");
+  const turn: Turn = {
+    prompt: "fix the parser",
+    steps: [
+      { kind: "text", text: "Looking at the parser first." },
+      { kind: "tool", id: "t1", name: "Bash", subject: "npm test", result: "2 failed", error: true },
+      { kind: "tool", id: "t2", name: "Edit", subject: "src/parse.ts", result: "ok", error: false },
+    ],
+    answer,
+    truncated: false,
+  };
+
+  beforeEach(async () => {
+    w = await world({ transcripts: { turn: async () => turn } });
+    await bind(w);
+  });
+
+  it("sends the whole answer and the process, the rest in the pane's topic", async () => {
+    w.herdr.agents = [agent("working")];
+    await w.bridge.tick();
+    await run(w, 200, "working");
+    const from = w.aio.delivered.length;
+    await run(w, 34, "done");
+    const sent = w.aio.since(from);
+    expect(sent.length).toBe(2);
+    const [main, rest] = sent;
+    expect(main?.message.text).toMatch(/^\*\*my-mac · ledger · Codex finished\*\*/);
+    expect(main?.message.text).toContain("Asked: fix the parser");
+    expect(main?.message.text).toContain("Line 0 of the answer");
+    const details = main?.message.sections?.find((x) => x.kind === "details");
+    expect(details?.text).toContain("Process: 3 steps, 2 tool calls");
+    expect(details?.text).toContain("❌ **Bash** `npm test`");
+    expect(details).toMatchObject({ collapsed: true });
+    // The answer goes on in the topic, in order, to the last line.
+    const t = w.store.state.threads[0];
+    expect(rest?.route).toMatchObject({ conversationId: WORKBENCH, replyToMessageId: t?.rootMessageId });
+    expect(rest?.message.text).toContain("Line 399 of the answer");
+    expect(rest?.operationId).toBe(`${main?.operationId}:m1`);
   });
 });

@@ -11,6 +11,10 @@ export interface Strings {
   footerTopic: (pane: string) => string;
   footerDm: (pane: string) => string;
   escLabel: string;
+  asked: string;
+  processHead: (tools: number, steps: number) => string;
+  stepsLeftOut: (n: number) => string;
+  continued: string;
   sent: string;
   pressed: (key: string) => string;
   notOwner: string;
@@ -80,6 +84,10 @@ const zh: Strings = {
   footerTopic: (pane) => `${pane} · 在这个话题里回复，就是对它说话`,
   footerDm: (pane) => `${pane} · 回复这条消息，就是对它说话`,
   escLabel: "Esc 取消",
+  asked: "问的是：",
+  processHead: (tools, steps) => `过程：${steps} 步，${tools} 次工具调用`,
+  stepsLeftOut: (n) => `_（前面 ${n} 步太长，没有发）_`,
+  continued: "_（接下面）_",
   sent: "已送到",
   pressed: (key) => `已按 ${key}`,
   notOwner: "只有这台电脑的主人能回这个 agent。",
@@ -183,6 +191,11 @@ const en: Strings = {
   footerTopic: (pane) => `${pane} · reply in this topic to talk to it`,
   footerDm: (pane) => `${pane} · reply to this message to talk to it`,
   escLabel: "Esc cancel",
+  asked: "Asked:",
+  processHead: (tools, steps) =>
+    `Process: ${steps} step${steps === 1 ? "" : "s"}, ${tools} tool call${tools === 1 ? "" : "s"}`,
+  stepsLeftOut: (n) => `_(the first ${n} steps are left out: too long)_`,
+  continued: "_(continued below)_",
   sent: "Sent.",
   pressed: (key) => `Pressed ${key}.`,
   notOwner: "Only this machine's owner can answer this agent.",

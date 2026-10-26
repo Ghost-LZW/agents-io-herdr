@@ -19,6 +19,8 @@ export interface HerdrAgent {
   cwd?: string | null;
   foreground_cwd?: string | null;
   focused: boolean;
+  /** The agent's own session (Claude Code's session id, …): where its transcript is. */
+  agent_session?: { source?: string; agent?: string; kind: string; value: string } | null;
   state_change_seq?: number;
   tab_id?: string;
   workspace_id?: string;
