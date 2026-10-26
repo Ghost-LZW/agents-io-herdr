@@ -27,6 +27,11 @@ export interface Config {
   account: string;
   herdrSocket: string;
   workbench: { create: boolean; name: string | null };
+  /**
+   * A live card for a long turn: sent once it has worked for `afterMs`, its process (the thinking
+   * bubble) updated every `everyMs` until it ends; null: off.
+   */
+  live: { afterMs: number; everyMs: number } | null;
   rules: WatchRules;
   paths: Paths;
 }
@@ -176,6 +181,12 @@ export function resolveConfig(
     quietBlocked: bool(notify.quietBlocked, "notify.quietBlocked", DEFAULT_RULES.quietBlocked),
   };
   const workbench = obj(raw.workbench, "workbench");
+  const live = bool(notify.live, "notify.live", true)
+    ? {
+        afterMs: seconds(notify.liveAfterSec, "notify.liveAfterSec", 60_000),
+        everyMs: Math.max(2000, seconds(notify.liveEverySec, "notify.liveEverySec", 5000)),
+      }
+    : null;
   const dataDir = str(raw.dataDir, "dataDir");
   const data = dataDir ? path(dataDir) : defaultDataDir(env, home);
   const aioData = join(data, "aio");
@@ -208,6 +219,7 @@ export function resolveConfig(
       create: bool(workbench.create, "workbench.create", true),
       name: str(workbench.name, "workbench.name"),
     },
+    live,
     rules,
     paths: {
       configFile: file,

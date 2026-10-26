@@ -59,6 +59,11 @@ export class FakeAio {
   refuse: ((d: Delivery) => string | null) | null = null;
   /** Features `host.hello` answers. */
   features = ["host.takeover"];
+  /** `deliver.update` requests, in order. */
+  readonly updates: Frame[] = [];
+  updateMessage(f: Frame | undefined): RenderedMessage {
+    return (f?.message ?? { text: "" }) as RenderedMessage;
+  }
   /** `conversation.create` requests, and what they answer (an error code fails them). */
   readonly creates: Frame[] = [];
   createAnswer: { chatId: string } | { error: string } = { chatId: "oc_test_workbench" };
@@ -195,6 +200,15 @@ export class FakeAio {
           };
       this.#results.set(d.operationId, r);
       return this.#reply(c, id, r);
+    }
+    if (f.type === "deliver.update") {
+      this.updates.push(f);
+      return this.#reply(c, id, {
+        operationId: f.operationId,
+        providerMessageId: f.providerMessageId,
+        status: "delivered",
+        duplicate: false,
+      });
     }
     if (f.type === "conversation.create") {
       this.creates.push(f);

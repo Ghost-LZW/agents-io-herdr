@@ -36,6 +36,8 @@ The bridge talks to its daemon only over the agents-io host protocol (JSONL on a
 
 **What a notice says:** the machine, the project directory (last path component only), the agent, the terminal title, and what you asked. For a finished turn: **the whole answer**, then the whole process folded under "Process: N steps, M tool calls" — what the agent said between steps, its thinking when the model wrote it down, and every tool call (command, file, pattern) with the start of its output. For a dialog: the dialog from the screen, its numbered choices as buttons plus Esc, and the process so far. What one card cannot hold follows in the same topic (in the DM: as replies), up to 10 more messages; when even that is too little, the oldest steps are left out and a line says so. All of it is redacted.
 
+**While it works:** a turn that has worked for a minute gets a live card in its topic: Feishu's thinking bubble shows each step as it happens (thinking, what the agent says, every tool call and its result), updated every few seconds from the transcript. When the turn ends the card is settled with the answer, and the done notice points at it. Not during quiet hours, not while you are looking at the pane, and only with an agents-io daemon that can edit what it sent (`deliver.update`).
+
 This comes from the transcript the agent writes itself (Claude Code: `~/.claude/projects/…/<session>.jsonl`; Codex: `~/.codex/sessions/…/rollout-…-<session>.jsonl`), which herdr names for each pane; only its last 8 MB is read. When there is none (another agent, a session not yet written), the notice shows the end of the pane's output instead: Claude Code's side panel and input box and Codex's footer cut away, Claude Code's recap line and the head of the last message for a finished turn.
 
 **Where:** a workbench group (you and the bot) that the bridge creates when you bind yourself; each herdr pane gets its own topic. Without a workbench, notices go to your DM with the bot.
@@ -166,6 +168,9 @@ prints a one-time code (valid 15 minutes, 5 tries). Send it to the bot in a dire
 | `notify.presentIdleSec` | 180 | Keyboard/mouse idle below this + pane focused = you are looking |
 | `notify.quiet` | `23:00-08:00` | Quiet hours, or `off` |
 | `notify.quietBlocked` | false | Also hold blocked notices during quiet hours |
+| `notify.live` | true | A live card for long turns (needs an agents-io daemon with `deliver.update`) |
+| `notify.liveAfterSec` | 60 | How long a turn works before its live card appears |
+| `notify.liveEverySec` | 5 | How often the live card follows the transcript (at least 2) |
 | `workbench.create` | true | Create the workbench group at setup |
 | `workbench.name` | `<machine> terminal` / `<machine> 终端` | Its name |
 | `dataDir` | `~/.local/share/agents-io-herdr` (or `$AGENTS_IO_HERDR_DATA`) | State and the daemon's data |

@@ -6,6 +6,11 @@ export interface Strings {
   duration: (ms: number) => string;
   blockedHead: (machine: string, place: string, agent: string) => string;
   doneHead: (machine: string, place: string, agent: string, dur: string) => string;
+  workingHead: (machine: string, place: string, agent: string) => string;
+  /** A done notice whose turn has a live card: the answer and the process are there. */
+  liveAbove: string;
+  /** A live card the bridge lost track of (it restarted while the turn ran). */
+  liveLost: string;
   overnightHead: (machine: string) => string;
   overnightItem: (place: string, agent: string, title: string, dur: string, at: string) => string;
   footerTopic: (pane: string) => string;
@@ -78,6 +83,9 @@ const zh: Strings = {
   },
   blockedHead: (machine, place, agent) => `**${machine} · ${place} · ${agent} 在等你**`,
   doneHead: (machine, place, agent, dur) => `**${machine} · ${place} · ${agent} 做完了**（这一轮 ${dur}）`,
+  workingHead: (machine, place, agent) => `**${machine} · ${place} · ${agent} 正在做**`,
+  liveAbove: "完整的回答和过程在上面那张卡片里。",
+  liveLost: "_（桥接重启了，这张卡片不再更新，后面的进度看新卡片或通知）_",
   overnightHead: (machine) => `**${machine} · 夜里做完的**`,
   overnightItem: (place, agent, title, dur, at) =>
     `- ${place} · ${agent}${title ? ` · ${title}` : ""}（${dur}，${at} 做完）`,
@@ -185,6 +193,9 @@ const en: Strings = {
   },
   blockedHead: (machine, place, agent) => `**${machine} · ${place} · ${agent} is waiting for you**`,
   doneHead: (machine, place, agent, dur) => `**${machine} · ${place} · ${agent} finished** (this turn: ${dur})`,
+  workingHead: (machine, place, agent) => `**${machine} · ${place} · ${agent} is working**`,
+  liveAbove: "The whole answer and the process are in the card above.",
+  liveLost: "_(the bridge restarted: this card is no longer updated; see the next card or notice)_",
   overnightHead: (machine) => `**${machine} · finished overnight**`,
   overnightItem: (place, agent, title, dur, at) =>
     `- ${place} · ${agent}${title ? ` · ${title}` : ""} (${dur}, done at ${at})`,

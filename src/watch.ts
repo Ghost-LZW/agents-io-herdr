@@ -72,6 +72,8 @@ export interface PaneView {
   status: string;
   since: number;
   sinceStart: boolean;
+  /** Start of the working stretch still open (a blocked dialog and a short flap keep it); null: none. */
+  workingSince: number | null;
 }
 
 export function inQuiet(rules: WatchRules, minute: number): boolean {
@@ -101,6 +103,7 @@ export class Watcher {
       status: st.status,
       since: st.since,
       sinceStart: st.sinceStart,
+      workingSince: st.workingSince,
     }));
   }
 

@@ -63,6 +63,8 @@ export interface NoticeView {
   /** Our thread id, for buttons. */
   threadId: string | null;
   options: DialogOption[];
+  /** The turn has a live card in this thread (its process and answer are there). */
+  live?: boolean;
 }
 
 /** UTF-8 bytes of a card's answer, and of the process on one card: well under Feishu's ~30 KB card. */
@@ -156,6 +158,7 @@ export function processPages(steps: Step[], s: Strings, maxPages: number): strin
  */
 export function noticeMessages(n: Notice, v: NoticeView): RenderedMessage[] {
   const turn = n.kind === "overnight" ? null : v.turn;
+  if (n.kind !== "overnight" && v.live) return [liveNotice(n, v)];
   if (!turn || n.kind === "overnight") return [noticeMessage(n, v)];
   const { s, machine } = v;
   const a = n.agent;
@@ -197,6 +200,46 @@ export function noticeMessages(n: Notice, v: NoticeView): RenderedMessage[] {
     })),
   ];
   return [main, ...more];
+}
+
+/** A notice when a live card shows the turn: a finished turn points at it; a dialog still shows the screen and its buttons. */
+function liveNotice(n: Extract<Notice, { agent: unknown }>, v: NoticeView): RenderedMessage {
+  const { s, machine } = v;
+  const a = n.agent;
+  const footer = v.topic ? s.footerTopic(a.pane_id) : s.footerDm(a.pane_id);
+  if (n.kind === "blocked") {
+    const text = `${s.blockedHead(machine, placeOf(a), agentName(a))}${fence(v.screen ?? "")}`;
+    const actions = v.threadId ? buttons(v.threadId, v.options, s) : undefined;
+    return { text, sections: [{ kind: "footer", text: footer }], ...(actions ? { actions } : {}) };
+  }
+  const head = s.doneHead(machine, placeOf(a), agentName(a), s.duration(n.turnMs));
+  return { text: `${head}\n${s.liveAbove}`, sections: [{ kind: "footer", text: footer }] };
+}
+
+/** A running turn's live card: the head and title, and the process lark-bot draws natively. */
+export function liveMessage(
+  a: HerdrAgent,
+  turn: Turn | null,
+  o: {
+    machine: string;
+    s: Strings;
+    topic: boolean;
+    progress: RenderedMessage["progress"] & object;
+  },
+): RenderedMessage {
+  const { s } = o;
+  const head = s.workingHead(o.machine, placeOf(a), agentName(a));
+  const title = titleOf(a);
+  const prompt = turn?.prompt.trim() ? `${s.asked} ${redact(clip(oneLine(turn.prompt), 200)).text}` : "";
+  const top = [title, prompt].filter(Boolean).join("\n");
+  const p = o.progress;
+  const done = p.status !== "running" && p.status !== "requires_action";
+  const answer = done ? [top, p.answer].filter(Boolean).join("\n\n") : "";
+  return {
+    text: answer || top || head,
+    sections: [{ kind: "status", text: done ? head : `${head}${top ? `\n${top}` : ""}` }],
+    progress: { ...p, answer, ...(done ? {} : { headline: head }) },
+  };
 }
 
 export function noticeMessage(n: Notice, v: NoticeView): RenderedMessage {

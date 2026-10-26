@@ -248,8 +248,8 @@ describe("notice cards", () => {
       ],
       error: null,
       views: [
-        { key: "w1:p1|term_1", status: "blocked", since: 0, sinceStart: false },
-        { key: "w1:p2|term_2", status: "working", since: 0, sinceStart: true },
+        { key: "w1:p1|term_1", status: "blocked", since: 0, sinceStart: false, workingSince: null },
+        { key: "w1:p2|term_2", status: "working", since: 0, sinceStart: true, workingSince: null },
       ],
       now: 12 * 60_000,
       s,

@@ -817,3 +817,97 @@ describe("notices from the transcript", () => {
     expect(rest?.operationId).toBe(`${main?.operationId}:m1`);
   });
 });
+
+describe("live cards", () => {
+  let turn: Turn;
+  beforeEach(async () => {
+    turn = {
+      prompt: "fix the parser",
+      steps: [{ kind: "tool", id: "t1", name: "Bash", subject: "npm test", result: null, error: false }],
+      answer: "",
+      truncated: false,
+    };
+    w = await world({
+      transcripts: { turn: async () => structuredClone(turn) },
+      aioFeatures: ["host.takeover", "deliver.update"],
+    });
+    await bind(w);
+  });
+
+  it("opens a card with the process once a turn has worked a minute, follows it, settles it with the answer", async () => {
+    w.herdr.agents = [agent("working")];
+    await w.bridge.tick();
+    await run(w, 58, "working");
+    expect(w.store.state.live).toHaveLength(0);
+    const from = w.aio.delivered.length;
+    await run(w, 4, "working");
+    const [card] = w.aio.since(from);
+    expect(card?.message.progress).toMatchObject({
+      status: "running",
+      steps: [{ kind: "tool", itemId: "t1", type: "command", title: "Bash: npm test", status: "running" }],
+    });
+    expect(card?.message.sections?.[0]?.text).toContain("**my-mac · ledger · Codex is working**");
+    expect(card?.route).toMatchObject({ conversationId: WORKBENCH });
+    expect(w.store.state.live).toHaveLength(1);
+    const t = w.store.state.threads[0];
+    expect(t?.rootMessageId).toBe(w.store.state.live[0]?.messageId);
+
+    // The tool finishes and the agent says something: the card follows.
+    turn.steps[0] = { kind: "tool", id: "t1", name: "Bash", subject: "npm test", result: "2 failed", error: true };
+    turn.steps.push({ kind: "text", text: "Two tests fail; fixing." });
+    await run(w, 6, "working");
+    const u = w.aio.updates.at(-1);
+    expect(u).toMatchObject({ providerMessageId: w.store.state.live[0]?.messageId, sequence: 1 });
+    expect(w.aio.updateMessage(u).progress?.steps).toMatchObject([
+      { kind: "tool", status: "failed", resultPreview: "2 failed", isError: true },
+      { kind: "narration", text: "Two tests fail; fixing." },
+    ]);
+    // Nothing new: no update.
+    const n = w.aio.updates.length;
+    await run(w, 100, "working");
+    expect(w.aio.updates).toHaveLength(n);
+
+    // Done: settled with the answer, then the done notice in its topic points at it.
+    turn.answer = "Fixed: the parser skipped empty lines.";
+    // A stop counts as the same stretch for doneSettleMs (it may start again): settled with the done notice.
+    await run(w, 2, "done");
+    expect(w.store.state.live).toHaveLength(1);
+    await run(w, 30, "done");
+    const fin = w.aio.updates.at(-1);
+    expect(fin).toMatchObject({ final: true, operationId: expect.stringMatching(/:final$/) });
+    expect(w.aio.updateMessage(fin).progress).toMatchObject({
+      status: "completed",
+      answerFinal: true,
+      answer: expect.stringContaining("Fixed: the parser skipped empty lines."),
+    });
+    expect(w.store.state.live).toHaveLength(0);
+    const notice = w.aio.delivered.at(-1);
+    expect(notice?.message.text).toMatch(
+      /finished\*\* \(this turn: \d+ min\)\nThe whole answer and the process are in the card above\./,
+    );
+    expect(notice?.route).toMatchObject({ replyToMessageId: t?.rootMessageId });
+  });
+
+  it("settles a card whose pane is gone as interrupted", async () => {
+    w.herdr.agents = [agent("working")];
+    await w.bridge.tick();
+    await run(w, 62, "working");
+    expect(w.store.state.live).toHaveLength(1);
+    w.herdr.agents = [];
+    await w.bridge.tick();
+    expect(w.aio.updates.at(-1)).toMatchObject({ final: true });
+    expect(w.aio.updateMessage(w.aio.updates.at(-1)).progress?.status).toBe("interrupted");
+    expect(w.store.state.live).toHaveLength(0);
+  });
+
+  it("sends no card when the daemon cannot update one", async () => {
+    await w.done();
+    w = await world({ transcripts: { turn: async () => turn } });
+    await bind(w);
+    w.herdr.agents = [agent("working")];
+    await w.bridge.tick();
+    await run(w, 90, "working");
+    expect(w.store.state.live).toHaveLength(0);
+    expect(w.aio.updates).toHaveLength(0);
+  });
+});

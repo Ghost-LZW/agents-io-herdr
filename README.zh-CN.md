@@ -36,6 +36,8 @@ bridge 只通过 agents-io 的宿主协议（unix socket 上的 JSONL）和自�
 
 **通知里有什么**：哪台机器、项目目录（只取最后一级）、哪个 agent、终端标题，以及你问的是什么。做完时：**完整的回答**，再把整个过程折叠在“过程：N 步，M 次工具调用”下面——agent 在各步之间说的话、模型写下的思考，以及每次工具调用（命令、文件、搜索词）和它输出的开头。卡在对话框时：屏幕上的对话框，带编号的选项做成按钮外加 Esc，以及到此为止的过程。一张卡放不下的，接着发在同一个话题里（私聊里是回复），最多再发 10 条；还不够时，最早的几步不发，并有一行说明。全部内容都已脱敏。
 
+**正在做的时候**：一轮做满一分钟，就在它的话题里发一张实时卡片：飞书的思考气泡一步步显示它在做什么（思考、agent 说的话、每次工具调用和结果），每隔几秒按会话记录更新。这一轮结束时卡片收尾、写上回答，做完的通知指向它。安静时段不发，你正看着这个窗格时不发，守护进程不支持修改已发消息（`deliver.update`）时也不发。
+
 这些来自 agent 自己写的会话记录（Claude Code：`~/.claude/projects/…/<会话>.jsonl`；Codex：`~/.codex/sessions/…/rollout-…-<会话>.jsonl`），herdr 会告诉我们每个窗格对应哪个会话；只读最后 8 MB。没有会话记录时（别的 agent、会话还没写文件），通知改用窗格输出的末尾：去掉 Claude Code 的侧栏和输入框、Codex 的底栏；做完时是 Claude Code 的 recap 行加最后一条消息的开头。
 
 **发到哪**：一个工作台群（你和机器人），在你绑定主人时由 bridge 自动创建；herdr 的每个窗格一个话题。没有工作台时发到你和机器人的私聊。
@@ -166,6 +168,9 @@ agents-io-herdr setup --wait
 | `notify.presentIdleSec` | 180 | 键鼠空闲少于这个且窗格在前台 = 你正看着 |
 | `notify.quiet` | `23:00-08:00` | 安静时段，或 `off` |
 | `notify.quietBlocked` | false | 安静时段里卡住的也先攒着 |
+| `notify.live` | true | 长的一轮发实时卡片（需要支持 `deliver.update` 的 agents-io 守护进程） |
+| `notify.liveAfterSec` | 60 | 一轮做了多久之后发实时卡片 |
+| `notify.liveEverySec` | 5 | 实时卡片多久按会话记录更新一次（至少 2） |
 | `workbench.create` | true | 绑定主人时自动建工作台群 |
 | `workbench.name` | `<machine> 终端` / `<machine> terminal` | 群名 |
 | `dataDir` | `~/.local/share/agents-io-herdr`（或 `$AGENTS_IO_HERDR_DATA`） | 状态和守护进程的数据 |
