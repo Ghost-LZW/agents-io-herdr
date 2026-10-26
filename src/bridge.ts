@@ -37,7 +37,7 @@ import {
   buttons,
   KEY_ACTION,
   keyLabel,
-  noticeMessage,
+  noticeMessages,
   placeOf,
   quietLabel,
   statusMessage,
@@ -75,6 +75,7 @@ import {
   writePrivate,
 } from "./store.ts";
 import { minuteOfDay } from "./system.ts";
+import type { TranscriptSource, Turn } from "./transcript.ts";
 import { type Notice, paneKey, Watcher } from "./watch.ts";
 
 export const CHANNEL = "lark-bot";
@@ -101,6 +102,8 @@ export interface BridgeOptions {
   /** The app's REST client; null: the workbench cannot be created automatically. */
   feishu: FeishuApi | null;
   store: Store;
+  /** Agents' own transcripts (the whole turn); none: notices show the screen only. */
+  transcripts?: TranscriptSource;
   now?: () => number;
   idleMs?: () => number | null;
   log?: (msg: string) => void;
@@ -109,6 +112,7 @@ export interface BridgeOptions {
 interface PendingNotice {
   notice: Notice;
   screen: string | null;
+  turn: Turn | null;
   options: DialogOption[];
   operationId: string;
   /** The id a new thread for this pane gets (fixed, so a retried send carries the same buttons). */
@@ -332,6 +336,7 @@ export class Bridge {
   async #enqueue(n: Notice, now: number): Promise<void> {
     let screen: string | null = null;
     let options: DialogOption[] = [];
+    let turn: Turn | null = null;
     if (n.kind !== "overnight") {
       try {
         // A dialog is at the bottom; a finished turn's conclusion is at the start of its last message.
@@ -341,11 +346,17 @@ export class Bridge {
       } catch (e) {
         this.#log(`reading ${n.agent.pane_id} failed: ${(e as Error).message}`);
       }
+      try {
+        turn = (await this.#o.transcripts?.turn(n.agent)) ?? null;
+      } catch (e) {
+        this.#log(`reading the transcript of ${n.agent.pane_id} failed: ${(e as Error).message}`);
+      }
     }
     const subject = n.kind === "overnight" ? "overnight" : `${n.agent.terminal_id}:${n.kind}`;
     this.#queue.push({
       notice: n,
       screen,
+      turn,
       options,
       operationId: `herdr:n:${sha(`${this.#o.machine}\n${subject}\n${now}`).slice(0, 32)}`,
       newThreadId: newId(),
@@ -411,7 +422,7 @@ export class Bridge {
     for (const d of this.#destinations()) {
       const operationId = `${p.operationId}:${sha(d.chatId).slice(0, 8)}`;
       if (n.kind === "overnight") {
-        const msg = noticeMessage(n, this.#view(p, d, null));
+        const [msg] = noticeMessages(n, this.#view(p, d, null)) as [RenderedMessage];
         const r = await this.#deliver(operationId, this.#route(d.chatId), msg);
         if (r.status === "rejected") {
           this.#log(`overnight list refused in ${d.workbench ? "the workbench" : "the DM"}: ${r.error ?? ""}`);
@@ -425,7 +436,7 @@ export class Bridge {
       const key = paneKey(a);
       const thread = st.openThread(key, d.chatId);
       const threadId = thread?.id ?? p.newThreadId;
-      const msg = noticeMessage(n, this.#view(p, d, threadId));
+      const [msg, ...more] = noticeMessages(n, this.#view(p, d, threadId)) as [RenderedMessage, ...RenderedMessage[]];
       const route = thread ? this.#threadRoute(thread) : this.#route(d.chatId);
       const r = await this.#deliver(operationId, route, msg);
       if (r.status === "rejected") {
@@ -461,15 +472,32 @@ export class Bridge {
       }
       st.save();
       if (r.status === "unknown") this.#log(`notice ${operationId}: outcome unknown (not sent again)`);
+      if (t && more.length) await this.#sendMore(t, operationId, more);
       return true;
     }
     return false;
+  }
+
+  /** What did not fit on the notice, after it in its topic; a part that cannot be sent is logged and skipped. */
+  async #sendMore(t: Thread, operationId: string, more: RenderedMessage[]): Promise<void> {
+    for (const [i, m] of more.entries()) {
+      try {
+        const r = await this.#deliver(`${operationId}:m${i + 1}`, this.#threadRoute(t), m);
+        if (r.providerMessageId) this.store.remember(r.providerMessageId, t.id);
+        if (r.status === "rejected") this.#log(`part ${i + 1} of ${operationId} refused: ${r.error ?? ""}`);
+      } catch (e) {
+        this.#log(`part ${i + 1} of ${operationId} not sent: ${(e as Error).message}`);
+        break;
+      }
+    }
+    this.store.save();
   }
 
   #view(p: PendingNotice, d: Destination, threadId: string | null) {
     return {
       machine: this.#o.machine,
       screen: p.screen,
+      turn: p.turn,
       timeZone: this.#c.timeZone,
       s: this.#s,
       topic: d.workbench,
