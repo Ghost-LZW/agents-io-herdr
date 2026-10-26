@@ -91,6 +91,8 @@ const SEND_TTL_MS = 30 * 60_000;
 /** What the bridge needs of the daemon connection (AioClient, or a fake). */
 export interface AioPort {
   readonly online: boolean;
+  /** The last `host.hello` answer (its `features`), when connected. */
+  readonly hello?: { features?: string[] } | null;
   request<T>(type: string, body?: Record<string, unknown>, timeoutMs?: number): Promise<T>;
 }
 
@@ -675,19 +677,34 @@ export class Bridge {
     const owner = st.owner;
     if (!owner) return;
     const feishu = this.#o.feishu;
-    if (!this.#c.workbench.create || !feishu) {
+    // The daemon's lark-bot makes the group when it can (`conversation.create`); an older daemon: our own REST call.
+    const viaAio = this.#o.aio.hello?.features?.includes("conversation.create") ?? false;
+    if (!this.#c.workbench.create || (!viaAio && !feishu)) {
       const why = !this.#c.workbench.create ? "workbench.create is false" : "no app credentials";
       return this.#answer(item, { text: this.#s.workbenchFailed(why) }, null, n);
     }
     const name = this.#c.workbench.name ?? this.#s.workbenchName(this.#o.machine);
+    const description = this.#s.workbenchDescription(this.#o.machine);
+    const uuid = sha(`${owner.id}\n${owner.boundAt}`).slice(0, 32);
     let chatId: string;
     try {
-      ({ chatId } = await feishu.createChat({
-        name,
-        description: this.#s.workbenchDescription(this.#o.machine),
-        ownerId: owner.id,
-        uuid: sha(`${owner.id}\n${owner.boundAt}`).slice(0, 32),
-      }));
+      if (viaAio) {
+        ({ conversationId: chatId } = await this.#o.aio.request<{ conversationId: string }>(
+          "conversation.create",
+          {
+            operationId: `herdr:workbench:${uuid}`,
+            channel: CHANNEL,
+            account: this.#c.account,
+            name,
+            description,
+            owner: owner.id,
+            members: [owner.id],
+          },
+          60_000,
+        ));
+      } else if (feishu) {
+        ({ chatId } = await feishu.createChat({ name, description, ownerId: owner.id, uuid }));
+      } else throw new Error("no app credentials");
     } catch (e) {
       const why = e instanceof FeishuError ? `${e.code}: ${e.message}` : (e as Error).message;
       st.workbenchError = why;

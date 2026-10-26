@@ -50,11 +50,17 @@ interface World {
 }
 
 async function world(
-  o: { chat?: Parameters<typeof fakeFeishu>[0]; config?: Record<string, unknown>; transcripts?: TranscriptSource } = {},
+  o: {
+    chat?: Parameters<typeof fakeFeishu>[0];
+    config?: Record<string, unknown>;
+    transcripts?: TranscriptSource;
+    aioFeatures?: string[];
+  } = {},
 ): Promise<World> {
   const tmp = tempDir();
   const cfg = testConfig(tmp.dir, { herdrSocket: join(tmp.dir, "h.sock"), ...o.config });
   const aio = new FakeAio(cfg.paths.socket);
+  if (o.aioFeatures) aio.features = o.aioFeatures;
   await aio.start();
   const herdr = new FakeHerdr(cfg.herdrSocket);
   await herdr.start();
@@ -243,6 +249,22 @@ describe("setup: binding the owner and the workbench", () => {
       await send(w, { from: STRANGER, chat: "oc_test_other_dm", kind: "dm", text: "1111 1111" });
     expect(existsSync(w.cfg.paths.setupFile)).toBe(false);
     expect(w.aio.lastTable?.bindings.map((b) => b.id)).toEqual(["herdr:buttons"]);
+  });
+
+  it("has the daemon's lark-bot create the group when it can (conversation.create), not the app's REST", async () => {
+    w = await world({ aioFeatures: ["host.takeover", "conversation.create"] });
+    await bind(w);
+    expect(w.store.state.workbench).toMatchObject({ chatId: WORKBENCH, via: "created" });
+    expect(w.feishu.calls).toEqual([]);
+    expect(w.aio.creates).toHaveLength(1);
+    expect(w.aio.creates[0]).toMatchObject({
+      channel: "lark-bot",
+      account: ACCOUNT,
+      name: "my-mac terminal",
+      owner: OWNER,
+      members: [OWNER],
+      operationId: expect.stringMatching(/^herdr:workbench:[0-9a-f]{32}$/),
+    });
   });
 
   it("falls back to the DM when the group cannot be created; an @ in a group makes that group the workbench", async () => {

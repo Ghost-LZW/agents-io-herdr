@@ -57,6 +57,11 @@ export class FakeAio {
   readonly delivered: Delivery[] = [];
   /** Make a delivery fail: return a status other than delivered. */
   refuse: ((d: Delivery) => string | null) | null = null;
+  /** Features `host.hello` answers. */
+  features = ["host.takeover"];
+  /** `conversation.create` requests, and what they answer (an error code fails them). */
+  readonly creates: Frame[] = [];
+  createAnswer: { chatId: string } | { error: string } = { chatId: "oc_test_workbench" };
   #server: Server;
   #conns = new Set<Socket>();
   #seq = 0;
@@ -114,8 +119,8 @@ export class FakeAio {
     c.write(`${JSON.stringify({ v: 1, type: "result", id, ok: true, value })}\n`);
   }
 
-  #fail(c: Socket, id: string, code: string): void {
-    c.write(`${JSON.stringify({ v: 1, type: "result", id, ok: false, error: { code, message: code } })}\n`);
+  #fail(c: Socket, id: string, code: string, message = code): void {
+    c.write(`${JSON.stringify({ v: 1, type: "result", id, ok: false, error: { code, message } })}\n`);
   }
 
   #frame(c: Socket, f: Frame) {
@@ -136,7 +141,7 @@ export class FakeAio {
         protocol: 1,
         host: !!f.consumer,
         bindings: { version: this.lastTable?.version ?? null, active: !!this.lastTable },
-        features: ["host.takeover"],
+        features: this.features,
       });
     }
     if (f.type === "bindings.put") {
@@ -190,6 +195,18 @@ export class FakeAio {
           };
       this.#results.set(d.operationId, r);
       return this.#reply(c, id, r);
+    }
+    if (f.type === "conversation.create") {
+      this.creates.push(f);
+      const a = this.createAnswer;
+      if ("error" in a) return this.#fail(c, id, "channel_error", a.error);
+      return this.#reply(c, id, {
+        operationId: f.operationId,
+        channel: f.channel,
+        account: f.account,
+        conversationId: a.chatId,
+        duplicate: false,
+      });
     }
     return this.#fail(c, id, "unsupported");
   }
