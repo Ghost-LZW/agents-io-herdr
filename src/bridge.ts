@@ -531,6 +531,12 @@ export class Bridge {
     for (const card of [...st.live]) {
       const a = byKey.get(card.paneKey);
       const v = views.get(card.paneKey);
+      // A card from before a restart whose pane still works: this process carries it on (the watcher's stretch is new).
+      if (a && v && v.workingSince !== null && !this.#liveShown.has(card.turnId)) {
+        card.stretch = v.workingSince;
+        this.#liveShown.set(card.turnId, { at: 0, json: "" });
+        this.store.save();
+      }
       if (!a || !v || v.workingSince !== card.stretch) await this.#settleLive(card, a ?? null, now);
       else if (now - (this.#liveShown.get(card.turnId)?.at ?? 0) >= cfg.everyMs) await this.#updateLive(card, a, now);
     }

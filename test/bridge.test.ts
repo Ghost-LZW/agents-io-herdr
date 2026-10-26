@@ -898,6 +898,34 @@ describe("live cards", () => {
     expect(notice?.route).toMatchObject({ replyToMessageId: t?.rootMessageId });
   });
 
+  it("after a restart, carries on the card of a pane that still works instead of opening another", async () => {
+    w.herdr.agents = [agent("working")];
+    await w.bridge.tick();
+    await run(w, 62, "working");
+    const [card] = w.store.state.live;
+    const sent = w.aio.delivered.length;
+    // A new bridge on the same state: its watcher starts over.
+    const again = new Bridge({
+      config: w.cfg,
+      machine: "my-mac",
+      herdr: herdrClient(w.herdr.socket),
+      aio: w.client,
+      feishu: null,
+      store: w.store,
+      transcripts: { turn: async () => structuredClone(turn) },
+      now: () => w.clock.now,
+      idleMs: () => null,
+    });
+    turn.steps.push({ kind: "text", text: "Still at it." });
+    for (let i = 0; i < 40; i++) {
+      w.clock.now += 2000;
+      await again.tick();
+    }
+    expect(w.store.state.live).toEqual([expect.objectContaining({ messageId: card?.messageId })]);
+    expect(w.aio.delivered).toHaveLength(sent);
+    expect(w.aio.updateMessage(w.aio.updates.at(-1)).progress?.steps.at(-1)).toMatchObject({ text: "Still at it." });
+  });
+
   it("settles a card whose pane is gone as interrupted", async () => {
     w.herdr.agents = [agent("working")];
     await w.bridge.tick();
