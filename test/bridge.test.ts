@@ -1257,6 +1257,39 @@ describe("agents started from a message (spawn)", () => {
     expect(w.store.state.spawned[1]?.session).toBeUndefined();
   });
 
+  it("two agents in a topic: announced, named in their messages, /agents lists them, /close <name> and /close all", async () => {
+    await sendItem(w, side({ id: "m1", text: "first", topic: "m0", trigger: true }));
+    await sendItem(w, side({ id: "m2", text: "second", topic: "m0", trigger: true }));
+    const [a, b] = w.store.state.spawned;
+    const la = `ai-${a?.id.slice(0, 4)}`;
+    const lb = `ai-${b?.id.slice(0, 4)}`;
+    const texts = () => w.aio.delivered.map((d) => d.message.text);
+    expect(texts()).toContainEqual(
+      `This topic now has 2 agents: ${la}, ${lb}. What you say goes to the newest, ${lb}; \`/agents\` lists them, \`/close <name>\` closes one, \`/close all\` closes all.`,
+    );
+    // The second agent's progress message carries its name while the topic is shared.
+    expect(texts().some((t) => t.startsWith(`【${lb}】⏳ On it`))).toBe(true);
+    await sendItem(w, side({ id: "m3", text: "/agents", topic: "m0" }));
+    expect(texts().at(-1)).toBe(`Agents in this topic: ${la}, ${lb} (newest: what you say goes to it)`);
+    await sendItem(w, side({ id: "m4", text: `/close ${la}`, topic: "m0" }));
+    expect(w.store.state.spawned.map((x) => x.closedAt !== null)).toEqual([true, false]);
+    expect(texts().at(-1)).toBe(`Closed ${la}. Still running: ${lb}.`);
+    await sendItem(w, side({ id: "m5", text: "/close nobody", topic: "m0" }));
+    expect(texts().at(-1)).toMatch(/^No agent named nobody/);
+    // Only one left: a bare /close is the old single-agent close.
+    await sendItem(w, side({ id: "m6", text: "/close", topic: "m0" }));
+    expect(texts().at(-1)).toBe("Closed this agent.");
+    expect(w.store.state.spawned.every((x) => x.closedAt !== null)).toBe(true);
+  });
+
+  it("/close all closes every agent of the topic", async () => {
+    await sendItem(w, side({ id: "m1", text: "a", topic: "m0", trigger: true }));
+    await sendItem(w, side({ id: "m2", text: "b", topic: "m0", trigger: true }));
+    await sendItem(w, side({ id: "m3", text: "/close all", topic: "m0" }));
+    expect(w.store.state.spawned.every((x) => x.closedAt !== null)).toBe(true);
+    expect(w.aio.delivered.at(-1)?.message.text).toMatch(/^Closed ai-\w{4}, ai-\w{4}\.$/);
+  });
+
   it("presses a key when the agent waits on a dialog, and says so when it asks", async () => {
     await sendItem(w, side({ id: "m1", text: "go", trigger: true }));
     const pane = w.store.state.spawned[0]?.paneId ?? "";

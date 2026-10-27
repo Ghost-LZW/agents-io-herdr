@@ -78,19 +78,21 @@ import { redact } from "./redact.ts";
 import { type DialogOption, optionsOf, summaryOf, tailOf } from "./screen.ts";
 import { lookup, realSecretSource, type SecretSource } from "./secrets.ts";
 import {
+  agentLabel,
   firstPrompt,
   type HookRunner,
   hookEnv,
-  isClose,
   laterPrompt,
   mcpTokenVar,
   prepareDir,
   ruleFor,
   runHook,
   type Spawned,
+  sharing,
   spawnedFor,
   spawnedRoute,
   startupAnswer,
+  topicCommand,
   topicOf,
   triggered,
   wakeOf,
@@ -791,7 +793,8 @@ export class Bridge {
     if (!target) return;
     const text = laterPrompt(item, this.#blobDir());
     if (!text) return;
-    if (isClose(textOf(env.content))) return this.#closeSpawned(target, item);
+    const tc = topicCommand(textOf(env.content));
+    if (tc) return this.#topicCommand(target, item, tc);
     await this.#mark(item, "working");
     const s = this.#s;
     const pane = this.#spawnedPane(target);
@@ -892,7 +895,38 @@ export class Bridge {
   }
 
   /** The owner's `/close`: the agent's tab closes, its turn (if any) settles, the chat is not routed for it any more. */
-  async #closeSpawned(sp: Spawned, item: InboundItem): Promise<void> {
+  /** `/agents`, `/close [name|all]` in a topic: which agents, which to close. */
+  async #topicCommand(
+    target: Spawned,
+    item: InboundItem,
+    tc: NonNullable<ReturnType<typeof topicCommand>>,
+  ): Promise<void> {
+    const all = sharing(this.store.state.spawned, target);
+    const names = all.map(agentLabel);
+    const newest = all.at(-1) ?? target;
+    const say = async (text: string) => {
+      await this.#mark(item, "done");
+      await this.#deliver(`herdr:sp:${sha(item.channelRef).slice(0, 24)}:cmd`, spawnedRoute(newest, item.envelope.id), {
+        text,
+      }).catch(() => undefined);
+    };
+    if (tc.cmd === "agents") return say(all.length ? this.#s.spawnList(names, agentLabel(newest)) : this.#s.spawnNone);
+    // A single agent in the topic: as before, it says it is closed.
+    if (all.length <= 1 && (tc.which === "newest" || tc.which === "all" || tc.which === agentLabel(target)))
+      return this.#closeSpawned(target, item);
+    const pick =
+      tc.which === "all"
+        ? all
+        : tc.which === "newest"
+          ? [newest]
+          : all.filter((x) => agentLabel(x) === tc.which || x.id.startsWith(tc.which));
+    if (!pick.length) return say(this.#s.spawnNoSuch(tc.which, names));
+    for (const sp of pick) await this.#closeSpawned(sp, item, true);
+    const left = sharing(this.store.state.spawned, target).map(agentLabel);
+    await say(this.#s.spawnClosedNamed(pick.map(agentLabel), left));
+  }
+
+  async #closeSpawned(sp: Spawned, item: InboundItem, quiet = false): Promise<void> {
     const now = this.#now();
     try {
       // Agents started before tabs were recorded: the tab of their pane.
@@ -909,8 +943,10 @@ export class Bridge {
     sp.marked = [];
     this.store.save();
     this.#log(`spawn ${sp.id}: closed by the owner`);
-    await this.#mark(item, "done");
-    await this.#spawnSay(sp, { text: this.#s.spawnClosed }, `herdr:sp:${sp.id}:closed`, item.envelope.id);
+    if (!quiet) {
+      await this.#mark(item, "done");
+      await this.#spawnSay(sp, { text: this.#s.spawnClosed }, `herdr:sp:${sp.id}:closed`, item.envelope.id);
+    }
     await this.pushBindings();
   }
 
@@ -977,11 +1013,29 @@ export class Bridge {
       this.store.save();
       await this.pushBindings();
       this.#log(`wake ${sp.id}: a fresh agent ${id}`);
+      const fresh = this.store.state.spawned.at(-1);
+      if (fresh) await this.#announceShared(fresh);
     } catch (e) {
       const why = e instanceof HerdrError ? `${e.code}: ${e.message}` : (e as Error).message;
       this.#log(`wake ${sp.id} failed: ${why}`);
       await this.#spawnSay(sp, { text: this.#s.spawnFailed(why) }, `herdr:wake:${sha(item.channelRef).slice(0, 16)}`);
     }
+  }
+
+  /** While a topic has more than one agent, each one's messages start with its name. */
+  #named(sp: Spawned, msg: RenderedMessage): RenderedMessage {
+    if (sharing(this.store.state.spawned, sp).length <= 1) return msg;
+    return { ...msg, text: `【${agentLabel(sp)}】${msg.text}` };
+  }
+
+  /** A second (or later) agent joined a topic: say who is there and how to reach each. */
+  async #announceShared(sp: Spawned): Promise<void> {
+    const all = sharing(this.store.state.spawned, sp);
+    if (all.length < 2) return;
+    const text = this.#s.spawnShared(all.map(agentLabel), agentLabel(sp));
+    await this.#deliver(`herdr:sp:${sp.id}:shared`, spawnedRoute(sp), { text }).catch((e) =>
+      this.#log(`spawn ${sp.id}: shared-topic note not sent: ${(e as Error).message}`),
+    );
   }
 
   /** The agent's pane, if it still runs the same program. */
@@ -1135,13 +1189,14 @@ export class Bridge {
     this.store.save();
     this.#log(`spawn ${rule.id}: agent ${id} in ${paneId}`);
     await this.pushBindings();
+    await this.#announceShared(sp);
     await this.#spawnProgress(sp, this.#s.spawnStarted(`herdr ${rule.workspace}/${label} (${paneId})`), false, env.id);
   }
 
   /** A message from the agent into its place; remembered so a reply to it reaches the agent. */
   async #spawnSay(sp: Spawned, msg: RenderedMessage, operationId: string, replyTo?: string): Promise<string | null> {
     try {
-      const r = await this.#deliver(operationId, spawnedRoute(sp, replyTo), msg);
+      const r = await this.#deliver(operationId, spawnedRoute(sp, replyTo), this.#named(sp, msg));
       if (r.status === "rejected") {
         this.#log(`spawn ${sp.id}: message refused: ${r.error ?? ""}`);
         return null;
@@ -1173,7 +1228,7 @@ export class Bridge {
             operationId: final ? `${base}:final` : `${base}:u${sp.progressSeq}`,
             route: spawnedRoute(sp),
             providerMessageId: sp.progressId,
-            message: { text },
+            message: this.#named(sp, { text }),
             sequence: sp.progressSeq,
             ...(final ? { final: true } : {}),
           },
