@@ -190,14 +190,41 @@ export async function createTab(
   });
 }
 
-/** Starts an agent in a pane at its shell prompt; resolves once herdr sees it ready for input. */
+/**
+ * Starts an agent in a pane at its shell prompt and waits until herdr sees it ready for input:
+ * over the socket `agent.start` answers at once (`launch_pending`), and a prompt before the agent
+ * is up is refused (`agent_not_ready`). A dialog at startup (a folder trust question) is
+ * `agent_not_ready` too.
+ */
 export async function startAgent(
   h: Herdr,
-  o: { name: string; kind: string; paneId: string; args: string[] },
+  o: {
+    name: string;
+    kind: string;
+    paneId: string;
+    args: string[];
+    timeoutMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+  },
 ): Promise<void> {
+  const timeoutMs = o.timeoutMs ?? 60_000;
+  const sleep = o.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   await h.call(
     "agent.start",
-    { name: o.name, kind: o.kind, pane_id: o.paneId, args: o.args, timeout_ms: 60_000 },
-    70_000,
+    { name: o.name, kind: o.kind, pane_id: o.paneId, args: o.args, timeout_ms: timeoutMs },
+    timeoutMs + 10_000,
   );
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    const r = await h.call<{
+      agent?: { interactive_ready?: boolean; launch_pending?: boolean; agent_status?: string };
+    }>("agent.get", { target: o.paneId });
+    const a = r.agent;
+    if (a?.interactive_ready) return;
+    if (a?.agent_status === "blocked")
+      throw new HerdrError("agent_not_ready", `${o.kind} is waiting on a dialog at startup`);
+    if (Date.now() > until)
+      throw new HerdrError("agent_not_ready", `${o.kind} was not ready within ${Math.round(timeoutMs / 1000)} s`);
+    await sleep(500);
+  }
 }

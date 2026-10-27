@@ -130,6 +130,8 @@ export interface BridgeOptions {
   transcripts?: TranscriptSource;
   /** Where `spawn` environment values (`env:…`, `keychain:…`) are looked up. */
   secrets?: SecretSource;
+  /** Waiting between polls (tests make it instant). */
+  sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   idleMs?: () => number | null;
   log?: (msg: string) => void;
@@ -864,7 +866,13 @@ export class Bridge {
           })();
       paneId = opened.root_pane.pane_id;
       label = opened.tab.label || label;
-      await startAgent(h, { name: `${rule.id}-${id}`, kind: rule.kind, paneId, args: rule.args });
+      await startAgent(h, {
+        name: `${rule.id}-${id}`,
+        kind: rule.kind,
+        paneId,
+        args: rule.args,
+        ...(this.#o.sleep ? { sleep: this.#o.sleep } : {}),
+      });
       const a = (await listAgents(h)).find((x) => x.pane_id === paneId);
       terminalId = a?.terminal_id ?? opened.root_pane.terminal_id;
       await promptAgent(h, paneId, firstPrompt(rule, item, now));
