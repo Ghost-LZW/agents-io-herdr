@@ -1023,7 +1023,7 @@ export class Bridge {
     if (sp.progressId && this.#canUpdate()) {
       sp.progressSeq++;
       try {
-        await this.#o.aio.request(
+        const r = await this.#o.aio.request<{ status: string; error?: string }>(
           "deliver.update",
           {
             operationId: final ? `${base}:final` : `${base}:u${sp.progressSeq}`,
@@ -1035,7 +1035,10 @@ export class Bridge {
           },
           60_000,
         );
-        return;
+        // A refused edit answers status "rejected" (not an error): the answer must still go out.
+        if (r.status === "delivered") return;
+        this.#log(`spawn ${sp.id}: progress not updated (${r.status}${r.error ? `: ${r.error}` : ""})`);
+        if (!final) return;
       } catch (e) {
         this.#log(`spawn ${sp.id}: progress not updated: ${(e as Error).message}`);
         if (!final) return;

@@ -156,14 +156,17 @@ function isLink(p: string): boolean {
   }
 }
 
-/** Where the agent's messages go: into the topic (anchored on the message that called it), or as a reply. */
+/**
+ * Where the agent's messages go: in a topic, into the topic itself (its root anchors the reply:
+ * a reply anchored on a message inside the topic can fail to find the topic's root); elsewhere,
+ * as a reply to the message that called it.
+ */
 export function spawnedRoute(s: Spawned, replyTo?: string): ReplyRoute {
   return {
     channel: s.channel,
     account: s.account,
     conversationId: s.conversationId,
-    ...(s.topic ? { threadId: s.topic } : {}),
-    replyToMessageId: replyTo ?? s.startMessageId,
+    ...(s.topic ? { threadId: s.topic, replyToMessageId: s.topic } : { replyToMessageId: replyTo ?? s.startMessageId }),
   };
 }
 

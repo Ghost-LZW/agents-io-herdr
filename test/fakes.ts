@@ -59,6 +59,8 @@ export class FakeAio {
   refuse: ((d: Delivery) => string | null) | null = null;
   /** Features `host.hello` answers. */
   features = ["host.takeover"];
+  /** deliver.update answers rejected (the channel refused the edit). */
+  refuseUpdates = false;
   /** `message.ack` requests, in order. */
   readonly acks: { messageId: string; state: string }[] = [];
   /** `deliver.update` requests, in order. */
@@ -209,10 +211,12 @@ export class FakeAio {
     }
     if (f.type === "deliver.update") {
       this.updates.push(f);
+      const refused = this.refuseUpdates;
       return this.#reply(c, id, {
         operationId: f.operationId,
         providerMessageId: f.providerMessageId,
-        status: "delivered",
+        status: refused ? "rejected" : "delivered",
+        ...(refused ? { error: "edit refused" } : {}),
         duplicate: false,
       });
     }
