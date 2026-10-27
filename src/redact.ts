@@ -31,6 +31,9 @@ const RULES: Rule[] = [
   { re: /\b(sk-(?:ant-|proj-)?)[A-Za-z0-9_-]{20,}/g, replace: keepPrefix },
   // AWS access key ids.
   { re: /\bAKIA[0-9A-Z]{16}\b/g, replace: () => `AKIA${REDACTED}` },
+  // Email addresses: Feishu's audit refuses a message that carries one (230028 "sensitive data:
+  // EMAIL_ADDRESS"), and an edit of a card that gained one fails the same way. The domain stays.
+  { re: /\b[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})\b/g, replace: (_m, domain) => `…@${domain}` },
   // Google API keys.
   { re: /\bAIza[0-9A-Za-z_-]{35}\b/g, replace: () => `AIza${REDACTED}` },
   // JSON Web Tokens.
