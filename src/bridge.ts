@@ -69,6 +69,7 @@ import type {
   BindingTable,
   ContentBlock,
   DeliverResult,
+  InboundEnvelope,
   InboundItem,
   RenderedMessage,
   ReplyRoute,
@@ -836,6 +837,28 @@ export class Bridge {
     sp.marked = [...(sp.marked ?? []), { route, messageId: item.envelope.id }].slice(-20);
   }
 
+  /**
+   * What the conversation said before the trigger (the daemon's `history.read`, the channel's own
+   * history): the topic in a topic, else the chat around it. None from a daemon without it.
+   */
+  async #historyOf(item: InboundItem): Promise<InboundEnvelope[]> {
+    if (!this.#o.aio.hello?.features?.includes("history")) return [];
+    const env = item.envelope;
+    const scope = env.conversation.threadId ? "thread" : env.conversation.kind === "dm" ? null : "chat";
+    if (!scope) return [];
+    try {
+      const r = await this.#o.aio.request<{ messages: InboundEnvelope[] }>(
+        "history.read",
+        { cursor: item.cursor, scope, limit: 60 },
+        30_000,
+      );
+      return r.messages ?? [];
+    } catch (e) {
+      this.#log(`history of ${env.channel} message: ${(e as Error).message}`);
+      return [];
+    }
+  }
+
   /** The daemon's blob store, where channel images and files are kept (agents open them from there). */
   #blobDir(): string {
     return join(this.#c.paths.aioDataDir, "blobs");
@@ -963,7 +986,7 @@ export class Bridge {
       });
       const a = (await listAgents(h)).find((x) => x.pane_id === paneId);
       terminalId = a?.terminal_id ?? opened.root_pane.terminal_id;
-      await promptAgent(h, paneId, firstPrompt(rule, item, now, this.#blobDir()));
+      await promptAgent(h, paneId, firstPrompt(rule, item, now, this.#blobDir(), await this.#historyOf(item)));
     } catch (e) {
       const why = e instanceof HerdrError ? `${e.code}: ${e.message}` : (e as Error).message;
       this.#log(`spawn ${rule.id} failed: ${why}`);
