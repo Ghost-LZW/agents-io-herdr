@@ -211,12 +211,22 @@ export async function startAgent(
 ): Promise<void> {
   const timeoutMs = o.timeoutMs ?? 60_000;
   const sleep = o.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
-  await h.call(
-    "agent.start",
-    { name: o.name, kind: o.kind, pane_id: o.paneId, args: o.args, timeout_ms: timeoutMs },
-    timeoutMs + 10_000,
-  );
   const until = Date.now() + timeoutMs;
+  // A new tab's shell takes a moment to be "available" (longer when the tab has an environment):
+  // herdr answers agent_pane_busy until then.
+  for (let tries = 0; ; tries++) {
+    try {
+      await h.call(
+        "agent.start",
+        { name: o.name, kind: o.kind, pane_id: o.paneId, args: o.args, timeout_ms: timeoutMs },
+        timeoutMs + 10_000,
+      );
+      break;
+    } catch (e) {
+      if (!(e instanceof HerdrError) || e.code !== "agent_pane_busy" || tries >= 30 || Date.now() > until) throw e;
+      await sleep(500);
+    }
+  }
   let answered = 0;
   for (;;) {
     const r = await h.call<{

@@ -1193,6 +1193,13 @@ describe("agents started from a message (spawn)", () => {
     expect(w.aio.acks.at(-1)).toEqual({ messageId: "m1", state: "done" });
   });
 
+  it("waits for a new tab's shell when herdr says it is not available yet", async () => {
+    w.herdr.busyStarts = 3;
+    await sendItem(w, side({ id: "m1", text: "go", trigger: true }));
+    expect(w.herdr.calls.filter(([m]) => m === "agent.start")).toHaveLength(4);
+    expect(w.store.state.spawned).toHaveLength(1);
+  });
+
   it("gives up on a startup dialog it does not know, saying what it asks", async () => {
     w.herdr.startupDialog = "Choose your theme\n❯ 1. Dark\n  2. Light";
     await sendItem(w, side({ id: "m1", text: "go", trigger: true }));
