@@ -112,6 +112,9 @@ export function pages(text: string, max: number): string[] {
   return out;
 }
 
+/** A long answer in messages of at most `ANSWER_PAGE_BYTES`. */
+export const answerPages = (text: string) => pages(text, ANSWER_PAGE_BYTES);
+
 /** One step of a turn as markdown: thinking, what the agent said, a tool call and the start of its output. */
 export function stepText(st: Step): string {
   if (st.kind === "thinking") return `💭 ${redact(st.text.trim()).text}`;

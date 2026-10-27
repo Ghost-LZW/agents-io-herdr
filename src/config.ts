@@ -33,7 +33,41 @@ export interface Config {
    */
   live: { afterMs: number; everyMs: number } | null;
   rules: WatchRules;
+  /**
+   * More channels for the project's daemon (agents-io channel entries, e.g. a `type: "module"`
+   * plugin), as written. Their `env:NAME` values are filled from `secrets` when the daemon starts.
+   */
+  extraChannels: Record<string, unknown>[];
+  /** `NAME` → where its value comes from (`env:…`, `keychain:…`): set in the daemon's environment only. */
+  secrets: Record<string, SecretRef[]>;
+  /** Messages that start a new agent in herdr (the owner's trigger on another channel); empty: none. */
+  spawn: SpawnRule[];
   paths: Paths;
+}
+
+/** Which owner messages start an agent, and with what. */
+export interface SpawnRule {
+  /** The rule's name, in thread ids and logs. */
+  id: string;
+  /** The channel and account whose owner messages start an agent (`dispatch` hint: the trigger was used). */
+  channel: string;
+  account: string;
+  /** The owner on that channel (`sender.channelUserId`). */
+  owner: string;
+  /** herdr agent kind (`claude`, `codex`, …). */
+  kind: string;
+  /** Arguments after the agent's executable. */
+  args: string[];
+  /** The pane's working directory (one subdirectory per agent is made in it). */
+  cwd: string;
+  /** Environment of the pane: values `env:…` / `keychain:…` are looked up, others as written. */
+  env: Record<string, SecretRef>;
+  /** Skill directories linked into each agent's `.claude/skills/` (and `.agents/skills/`). */
+  skills: string[];
+  /** Said to the agent before the owner's words (the place, how to read it, how to answer). */
+  preamble: string;
+  /** The herdr workspace (by label) the agents' tabs go into; made when missing. */
+  workspace: string;
 }
 
 export interface Paths {
@@ -130,6 +164,41 @@ function refs(v: unknown, where: string, dflt: SecretRef[], literalOk: boolean):
 
 const ACCOUNT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
+function spawnRule(r: Raw, where: string, path: (p: string) => string): SpawnRule {
+  const need = (k: string) => {
+    const v = str(r[k], `${where}.${k}`);
+    if (!v) throw new ConfigError(`${where}.${k} is required`);
+    return v;
+  };
+  const list = (k: string) => {
+    const v = r[k];
+    if (v === undefined || v === null) return [];
+    if (!Array.isArray(v) || v.some((x) => typeof x !== "string"))
+      throw new ConfigError(`${where}.${k} must be a list of strings`);
+    return v as string[];
+  };
+  const env: Record<string, SecretRef> = {};
+  for (const [k, v] of Object.entries(obj(r.env, `${where}.env`))) {
+    if (typeof v !== "string") throw new ConfigError(`${where}.env.${k} must be a string`);
+    env[k] = v;
+  }
+  const id = str(r.id, `${where}.id`) ?? "ai";
+  if (!/^[a-z0-9-]{1,24}$/.test(id)) throw new ConfigError(`${where}.id: lowercase letters, digits and -`);
+  return {
+    id,
+    channel: need("channel"),
+    account: need("account"),
+    owner: need("owner"),
+    kind: str(r.kind, `${where}.kind`) ?? "claude",
+    args: list("args"),
+    cwd: path(str(r.cwd, `${where}.cwd`) ?? "~/.local/share/agents-io-herdr/agents"),
+    env,
+    skills: list("skills").map(path),
+    preamble: str(r.preamble, `${where}.preamble`) ?? "",
+    workspace: str(r.workspace, `${where}.workspace`) ?? "ai",
+  };
+}
+
 export function defaultDataDir(env: Env, home: string): string {
   return env.AGENTS_IO_HERDR_DATA
     ? resolve(expandHome(env.AGENTS_IO_HERDR_DATA, home))
@@ -180,6 +249,22 @@ export function resolveConfig(
     quiet: parseQuiet(str(notify.quiet, "notify.quiet")),
     quietBlocked: bool(notify.quietBlocked, "notify.quietBlocked", DEFAULT_RULES.quietBlocked),
   };
+  const extraChannels = Array.isArray(raw.channels)
+    ? raw.channels.map((c, i) => obj(c, `channels[${i}]`))
+    : raw.channels === undefined
+      ? []
+      : (() => {
+          throw new ConfigError("channels must be a list of agents-io channel entries");
+        })();
+  const secrets: Record<string, SecretRef[]> = {};
+  for (const [k, v] of Object.entries(obj(raw.secrets, "secrets"))) {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(k))
+      throw new ConfigError(`secrets.${k}: names are UPPER_CASE environment variables`);
+    secrets[k] = refs(v, `secrets.${k}`, [], false);
+  }
+  const spawn = (Array.isArray(raw.spawn) ? raw.spawn : raw.spawn === undefined ? [] : [raw.spawn]).map((r, i) =>
+    spawnRule(obj(r, `spawn[${i}]`), `spawn[${i}]`, path),
+  );
   const workbench = obj(raw.workbench, "workbench");
   const live = bool(notify.live, "notify.live", true)
     ? {
@@ -221,6 +306,9 @@ export function resolveConfig(
     },
     live,
     rules,
+    extraChannels,
+    secrets,
+    spawn,
     paths: {
       configFile: file,
       configDir,

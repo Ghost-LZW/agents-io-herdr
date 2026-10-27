@@ -2,7 +2,7 @@
  * The bridge end to end, against a fake agents-io daemon (host protocol on a temp unix socket), a
  * fake herdr socket server and a fake Feishu Open API. No real Feishu, herdr or daemon.
  */
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AioClient } from "../src/aio.ts";
@@ -10,6 +10,7 @@ import { Bridge, CONSUMER, HOST_NAME } from "../src/bridge.ts";
 import type { Config } from "../src/config.ts";
 import { FeishuApi } from "../src/feishu.ts";
 import { herdrClient } from "../src/herdr.ts";
+import type { ContentBlock, InboundItem } from "../src/protocol.ts";
 import { Store, writeSetup } from "../src/store.ts";
 import type { TranscriptSource, Turn } from "../src/transcript.ts";
 import {
@@ -125,6 +126,13 @@ async function send(w: World, m: Parameters<typeof inbound>[0]) {
   expect(r).toMatchObject({ ok: true, value: { accepted: true } });
   await w.bridge.settled();
   return item;
+}
+
+/** Pushes a ready-made inbound item (another channel's) and waits until the bridge has handled it. */
+async function sendItem(w: World, item: InboundItem) {
+  const r = await w.aio.push(item);
+  expect(r).toMatchObject({ ok: true, value: { accepted: true } });
+  await w.bridge.settled();
 }
 
 async function bind(w: World): Promise<void> {
@@ -947,5 +955,188 @@ describe("live cards", () => {
     await run(w, 90, "working");
     expect(w.store.state.live).toHaveLength(0);
     expect(w.aio.updates).toHaveLength(0);
+  });
+});
+
+describe("agents started from a message (spawn)", () => {
+  const SIDE = "side-chat";
+  const ME = "u_owner_side";
+  const side = (m: {
+    id: string;
+    text: string;
+    chat?: string;
+    topic?: string;
+    trigger?: boolean;
+    from?: string;
+    quote?: string;
+  }): InboundItem => {
+    const base = inbound({ id: m.id, text: m.text });
+    const content: ContentBlock[] = [
+      ...(m.quote ? [{ type: "quote" as const, text: m.quote, fromMessageId: "q_1" }] : []),
+      { type: "text" as const, text: m.text },
+    ];
+    return {
+      ...base,
+      channelRef: `channel:${SIDE}/${m.id}`,
+      account: "me",
+      input: { ...base.input, content },
+      envelope: {
+        ...base.envelope,
+        id: m.id,
+        channel: SIDE,
+        account: "me",
+        conversation: {
+          id: m.chat ?? "g_1",
+          kind: m.topic ? "thread" : "group",
+          ...(m.topic ? { threadId: m.topic } : {}),
+        },
+        sender: { channelUserId: m.from ?? ME, evidence: "platform_signed" },
+        content,
+        replyRoute: { channel: SIDE, account: "me", conversationId: m.chat ?? "g_1", replyToMessageId: m.id },
+        admission: m.trigger ? "dispatch" : "observe",
+      },
+    };
+  };
+  let tmp: { dir: string; done: () => void };
+  let answer: Turn;
+
+  beforeEach(async () => {
+    tmp = tempDir();
+    mkdirSync(join(tmp.dir, "skill-x"));
+    answer = {
+      prompt: "",
+      steps: [{ kind: "tool", id: "t1", name: "Bash", subject: "ls", result: "a", error: false }],
+      answer: "",
+      truncated: false,
+    };
+    w = await world({
+      transcripts: { turn: async () => structuredClone(answer) },
+      aioFeatures: ["host.takeover", "deliver.update"],
+      config: {
+        notify: { live: false },
+        spawn: [
+          {
+            id: "ai",
+            channel: SIDE,
+            account: "me",
+            owner: ME,
+            kind: "claude",
+            args: ["--model", "m"],
+            cwd: tmp.dir,
+            skills: [join(tmp.dir, "skill-x")],
+            env: { SIDE_BASE: "http://127.0.0.1:1" },
+            preamble: "Read the place with the skill, then answer.",
+          },
+        ],
+      },
+    });
+    await bind(w);
+  });
+  afterEach(() => tmp.done());
+
+  it("starts an agent in a new herdr tab on the trigger, answers in the topic, takes later words there", async () => {
+    const t = w.aio.lastTable;
+    expect(t?.bindings.find((b) => b.id === "herdr:spawn:ai")?.match).toEqual({
+      channel: SIDE,
+      account: "me",
+      senders: [ME],
+      mentions: ["self"],
+    });
+
+    await sendItem(
+      w,
+      side({ id: "m1", text: "what is this about?", topic: "m0", trigger: true, quote: "the release slipped" }),
+    );
+    const [sp] = w.store.state.spawned;
+    expect(sp).toMatchObject({ rule: "ai", conversationId: "g_1", topic: "m0", startMessageId: "m1", closedAt: null });
+    const acts = w.herdr.actions.map(([m]) => m);
+    expect(acts).toEqual(["workspace.create", "tab.create", "agent.start", "agent.prompt"]);
+    const tab = w.herdr.calls.find(([m]) => m === "tab.create")?.[1];
+    expect(tab).toMatchObject({ label: expect.stringMatching(/^ai-/), env: { SIDE_BASE: "http://127.0.0.1:1" } });
+    expect(String(tab?.cwd)).toBe(join(tmp.dir, sp?.id ?? ""));
+    expect(lstatSync(join(tmp.dir, sp?.id ?? "", ".claude/skills/skill-x")).isSymbolicLink()).toBe(true);
+    expect(w.herdr.calls.find(([m]) => m === "agent.start")?.[1]).toMatchObject({
+      kind: "claude",
+      args: ["--model", "m"],
+    });
+    const prompt = String(w.herdr.calls.find(([m]) => m === "agent.prompt")?.[1].text);
+    expect(prompt).toContain("Read the place with the skill, then answer.");
+    expect(prompt).toContain("conversation: g_1");
+    expect(prompt).toContain("topic (thread root message): m0");
+    expect(prompt).toContain("> the release slipped");
+    expect(prompt).toContain("what is this about?");
+    // A progress message in the topic, and the chat is now routed to the host too.
+    const first = w.aio.delivered.at(-1);
+    expect(first?.route).toEqual({
+      channel: SIDE,
+      account: "me",
+      conversationId: "g_1",
+      threadId: "m0",
+      replyToMessageId: "m1",
+    });
+    expect(first?.message.text).toMatch(/^⏳ On it/);
+    expect(w.aio.lastTable?.bindings.some((b) => b.match.conversation === "g_1")).toBe(true);
+
+    // It works, then stops: the answer goes into the progress message (and closes it).
+    const pane = sp?.paneId ?? "";
+    w.herdr.agents = w.herdr.agents.map((a) => (a.pane_id === pane ? { ...a, agent_status: "working" } : a));
+    await run(w, 4);
+    answer.answer = "It is about the delayed release.";
+    w.herdr.agents = w.herdr.agents.map((a) => (a.pane_id === pane ? { ...a, agent_status: "idle" } : a));
+    await run(w, 6);
+    const fin = w.aio.updates.at(-1);
+    expect(fin).toMatchObject({ final: true, providerMessageId: first ? w.store.state.spawned[0]?.sent[0] : "" });
+    expect(w.aio.updateMessage(fin).text).toMatch(/^It is about the delayed release\.\n\n✓ Done \(/);
+    expect(w.store.state.spawned[0]?.turnAt).toBeNull();
+
+    // The owner says more in the same topic (no trigger): typed into the same agent. Others' words are not.
+    const before = w.herdr.actions.length;
+    await sendItem(w, side({ id: "m2", text: "and who owns it?", topic: "m0" }));
+    expect(w.herdr.actions.slice(before)).toEqual([["agent.prompt", { target: pane, text: "and who owns it?" }]]);
+    await sendItem(w, side({ id: "m3", text: "hi all", topic: "m0", from: "u_else" }));
+    expect(w.herdr.actions).toHaveLength(before + 1);
+
+    // The trigger again in the same topic: another agent, in the same workspace, a tab of its own.
+    await sendItem(w, side({ id: "m4", text: "start over", topic: "m0", trigger: true }));
+    expect(w.store.state.spawned).toHaveLength(2);
+    expect(w.herdr.actions.slice(before + 1).map(([m]) => m)).toEqual(["tab.create", "agent.start", "agent.prompt"]);
+    // Later words go to the newest agent of the topic.
+    await sendItem(w, side({ id: "m5", text: "thanks", topic: "m0" }));
+    expect(w.herdr.actions.at(-1)).toEqual([
+      "agent.prompt",
+      { target: w.store.state.spawned[1]?.paneId, text: "thanks" },
+    ]);
+  });
+
+  it("presses a key when the agent waits on a dialog, and says so when it asks", async () => {
+    await sendItem(w, side({ id: "m1", text: "go", trigger: true }));
+    const pane = w.store.state.spawned[0]?.paneId ?? "";
+    w.herdr.screens.set(pane, "Allow this?\n❯ 1. Yes\n  2. No");
+    w.herdr.agents = w.herdr.agents.map((a) => (a.pane_id === pane ? { ...a, agent_status: "blocked" } : a));
+    await run(w, 2);
+    expect(w.aio.delivered.at(-1)?.message.text).toMatch(/waiting for a choice[\s\S]*1\. Yes/);
+    await sendItem(w, side({ id: "m2", text: "1" }));
+    // Not in a topic: a reply to the agent's message reaches it; a bare message in the chat is not for it.
+    expect(w.herdr.actions.at(-1)?.[0]).not.toBe("agent.send_keys");
+    const asked = w.store.state.spawned[0]?.sent.at(-1) ?? "";
+    const reply = side({ id: "m3", text: "1" });
+    reply.envelope.content = [
+      { type: "quote", text: "", fromMessageId: asked },
+      { type: "text", text: "1" },
+    ];
+    reply.input.content = reply.envelope.content;
+    await sendItem(w, reply);
+    expect(w.herdr.actions.at(-1)).toEqual(["agent.send_keys", { target: pane, keys: ["1"] }]);
+  });
+
+  it("tells the owner when the agent cannot start, and ignores the trigger from anyone else", async () => {
+    w.herdr.errors.set("agent.start", "agent_not_ready");
+    await sendItem(w, side({ id: "m1", text: "go", trigger: true }));
+    expect(w.aio.delivered.at(-1)?.message.text).toMatch(/^Could not start an agent: agent_not_ready/);
+    expect(w.store.state.spawned).toHaveLength(0);
+    w.herdr.errors.clear();
+    const n = w.herdr.actions.length;
+    await sendItem(w, side({ id: "m2", text: "go", trigger: true, from: "u_else" }));
+    expect(w.herdr.actions).toHaveLength(n);
   });
 });

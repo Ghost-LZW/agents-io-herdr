@@ -156,3 +156,48 @@ export async function runInPane(h: Herdr, paneId: string, text: string): Promise
 export async function sendPaneKeys(h: Herdr, paneId: string, keys: string[]): Promise<void> {
   await h.call("pane.send_keys", { pane_id: paneId, keys });
 }
+
+/** One row of `workspace.list` (the fields this project reads). */
+export interface HerdrWorkspace {
+  workspace_id: string;
+  label: string;
+}
+
+export async function listWorkspaces(h: Herdr): Promise<HerdrWorkspace[]> {
+  const r = await h.call<{ workspaces: HerdrWorkspace[] }>("workspace.list", {});
+  return r.workspaces ?? [];
+}
+
+/** A new workspace (its first tab and pane come with it), not focused. */
+export async function createWorkspace(
+  h: Herdr,
+  o: { label: string; cwd: string },
+): Promise<{ workspace: HerdrWorkspace; root_pane: HerdrAgent }> {
+  return await h.call("workspace.create", { label: o.label, cwd: o.cwd, focus: false });
+}
+
+/** A new tab with a shell in `cwd` (its environment as given), not focused. */
+export async function createTab(
+  h: Herdr,
+  o: { workspaceId: string; label: string; cwd: string; env: Record<string, string> },
+): Promise<{ tab: HerdrTab; root_pane: HerdrAgent }> {
+  return await h.call("tab.create", {
+    workspace_id: o.workspaceId,
+    label: o.label,
+    cwd: o.cwd,
+    env: o.env,
+    focus: false,
+  });
+}
+
+/** Starts an agent in a pane at its shell prompt; resolves once herdr sees it ready for input. */
+export async function startAgent(
+  h: Herdr,
+  o: { name: string; kind: string; paneId: string; args: string[] },
+): Promise<void> {
+  await h.call(
+    "agent.start",
+    { name: o.name, kind: o.kind, pane_id: o.paneId, args: o.args, timeout_ms: 60_000 },
+    70_000,
+  );
+}

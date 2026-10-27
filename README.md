@@ -63,6 +63,17 @@ This comes from the transcript the agent writes itself (Claude Code: `~/.claude/
 
 `<pane>` is the pane's id (`w1:p2`), its short id (`p2`), its tab's label or its directory, the first that fits uniquely. Buttons and screen cards are tied to the program running in the pane (herdr's `terminal_id`): once another program runs there, they reach nothing.
 
+## Agents started from a message
+
+`spawn` rules start a new agent in herdr when the owner writes a trigger on another channel, for example a personal account loaded into the daemon as an agents-io channel plugin (`channels`, its tokens by name in `secrets`). The channel must mark the trigger as addressed to the deployment (admission `dispatch`). For each trigger the bridge:
+
+- opens a tab in the herdr workspace `workspace` (default `ai`), in a fresh directory under `cwd` with the rule's `skills` linked into `.claude/skills` and `.agents/skills`, and its `env` (values may be `env:…` or `keychain:…`);
+- starts the agent (`kind`, `args`) and gives it the rule's `preamble`, where it was called (conversation, topic, message ids), the quoted message and the owner's words;
+- answers in that place: a progress message, edited while it works where the daemon can (`deliver.update`), settled with the answer;
+- types what the owner says next in the same topic (or in reply to one of the agent's messages) into the same agent; while it waits on a dialog, a bare number or `esc` picks.
+
+Only the rule's `owner` (platform-signed) is listened to. Spawned panes get no notices or live cards in the workbench; they answer where they were called.
+
 ## Requirements
 
 - macOS for `install` (launchd); the bridge itself runs wherever Node runs, but "is the person looking" needs macOS.
@@ -171,6 +182,9 @@ prints a one-time code (valid 15 minutes, 5 tries). Send it to the bot in a dire
 | `notify.live` | true | A live card for long turns (needs an agents-io daemon with `deliver.update`) |
 | `notify.liveAfterSec` | 60 | How long a turn works before its live card appears |
 | `notify.liveEverySec` | 5 | How often the live card follows the transcript (at least 2) |
+| `channels` | — | More agents-io channel entries for the project's daemon, as written |
+| `secrets` | — | `NAME: "keychain:…" \| "env:…"`: set in the daemon's environment, for the `env:NAME` values of `channels` |
+| `spawn` | — | Rules that start an agent from a message (above): `channel`, `account`, `owner` (required); `kind` (`claude`), `args`, `cwd`, `env`, `skills`, `preamble`, `workspace` (`ai`), `id` (`ai`) |
 | `workbench.create` | true | Create the workbench group at setup |
 | `workbench.name` | `<machine> terminal` / `<machine> 终端` | Its name |
 | `dataDir` | `~/.local/share/agents-io-herdr` (or `$AGENTS_IO_HERDR_DATA`) | State and the daemon's data |

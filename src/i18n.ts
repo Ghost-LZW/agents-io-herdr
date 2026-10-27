@@ -11,6 +11,13 @@ export interface Strings {
   liveAbove: string;
   /** A live card the bridge lost track of (it restarted while the turn ran). */
   liveLost: string;
+  spawnStarted: (where: string) => string;
+  spawnWorking: (dur: string) => string;
+  spawnDone: (dur: string, steps: number, tools: number) => string;
+  spawnNoAnswer: string;
+  spawnFailed: (why: string) => string;
+  spawnGone: string;
+  spawnChoice: (screen: string) => string;
   overnightHead: (machine: string) => string;
   overnightItem: (place: string, agent: string, title: string, dur: string, at: string) => string;
   footerTopic: (pane: string) => string;
@@ -86,6 +93,13 @@ const zh: Strings = {
   workingHead: (machine, place, agent) => `**${machine} · ${place} · ${agent} 正在做**`,
   liveAbove: "完整的回答和过程在上面那张卡片里。",
   liveLost: "_（桥接重启了，这张卡片不再更新，后面的进度看新卡片或通知）_",
+  spawnStarted: (where) => `⏳ 收到，在 ${where} 开了一个 agent，在看了…`,
+  spawnWorking: (dur) => `⏳ 正在做（${dur}）`,
+  spawnDone: (dur, steps, tools) => `✓ 做完了（${dur}，${steps} 步，${tools} 次工具调用）`,
+  spawnNoAnswer: "（这一轮没有文字回答）",
+  spawnFailed: (why) => `没能开 agent：${why}`,
+  spawnGone: "这个 agent 已经结束；要继续请重新叫一个。",
+  spawnChoice: (screen) => `它在等你选择，回复数字（或 esc）：\n${screen}`,
   overnightHead: (machine) => `**${machine} · 夜里做完的**`,
   overnightItem: (place, agent, title, dur, at) =>
     `- ${place} · ${agent}${title ? ` · ${title}` : ""}（${dur}，${at} 做完）`,
@@ -196,6 +210,13 @@ const en: Strings = {
   workingHead: (machine, place, agent) => `**${machine} · ${place} · ${agent} is working**`,
   liveAbove: "The whole answer and the process are in the card above.",
   liveLost: "_(the bridge restarted: this card is no longer updated; see the next card or notice)_",
+  spawnStarted: (where) => `⏳ On it: started an agent in ${where}…`,
+  spawnWorking: (dur) => `⏳ Working (${dur})`,
+  spawnDone: (dur, steps, tools) => `✓ Done (${dur}, ${steps} steps, ${tools} tool calls)`,
+  spawnNoAnswer: "(no written answer this turn)",
+  spawnFailed: (why) => `Could not start an agent: ${why}`,
+  spawnGone: "This agent has ended; start another with the trigger.",
+  spawnChoice: (screen) => `It is waiting for a choice; reply with a number (or esc):\n${screen}`,
   overnightHead: (machine) => `**${machine} · finished overnight**`,
   overnightItem: (place, agent, title, dur, at) =>
     `- ${place} · ${agent}${title ? ` · ${title}` : ""} (${dur}, done at ${at})`,

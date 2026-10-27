@@ -152,6 +152,30 @@ describe("the project's daemon", () => {
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(readFileSync(file, "utf8")).not.toMatch(/secret-value|app-test/);
   });
+
+  it("takes more channels as written, and their secrets only by name", () => {
+    const tmp = tempDir();
+    cleanups.push(tmp.done);
+    const extra = { type: "module", module: "~/x", account: "me", config: { token: "env:SIDE_TOKEN" } };
+    const c = testConfig(tmp.dir, { channels: [extra], secrets: { SIDE_TOKEN: "keychain:side-token" } });
+    expect((aioConfig(c) as { channels: unknown[] }).channels.at(-1)).toEqual(extra);
+    expect(c.secrets).toEqual({ SIDE_TOKEN: ["keychain:side-token"] });
+    expect(() => testConfig(tmp.dir, { secrets: { SIDE_TOKEN: "the-token-itself" } })).toThrow(
+      /a secret does not belong in a file/,
+    );
+    expect(() => testConfig(tmp.dir, { secrets: { lower: "env:X" } })).toThrow(/UPPER_CASE/);
+  });
+
+  it("reads spawn rules with defaults, and wants their channel, account and owner", () => {
+    const tmp = tempDir();
+    cleanups.push(tmp.done);
+    const c = testConfig(tmp.dir, { spawn: [{ channel: "side", account: "me", owner: "u1", skills: ["~/s"] }] });
+    expect(c.spawn[0]).toMatchObject({ id: "ai", kind: "claude", args: [], workspace: "ai", env: {}, preamble: "" });
+    expect(c.spawn[0]?.skills[0]).not.toMatch(/^~/);
+    expect(() => testConfig(tmp.dir, { spawn: [{ channel: "side", account: "me" }] })).toThrow(
+      /spawn\[0\]\.owner is required/,
+    );
+  });
 });
 
 describe("launchd", () => {
