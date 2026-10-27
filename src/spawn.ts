@@ -373,8 +373,35 @@ export function hookEnv(rule: SpawnRule, item: InboundItem, dir: string, id: str
   };
 }
 
-/** `/close` (or `/end`) alone: the owner ends the agent of this topic. */
-export const isClose = (text: string) => /^\s*\/(?:close|end)\s*$/i.test(text);
+/** A spawned agent's short name, as the owner sees it: `<rule>-<first 4 of its id>`. */
+export const agentLabel = (s: Pick<Spawned, "rule" | "id">) => `${s.rule}-${s.id.slice(0, 4)}`;
+
+/** The topic commands for spawned agents: `/agents`; `/close [name|all]` (`/end` the same). */
+export function topicCommand(
+  text: string,
+): { cmd: "agents" } | { cmd: "close"; which: "newest" | "all" | string } | null {
+  const t = text.trim();
+  if (/^\/agents$/i.test(t)) return { cmd: "agents" };
+  const m = /^\/(?:close|end)(?:\s+(\S+))?$/i.exec(t);
+  if (!m) return null;
+  const arg = m[1]?.toLowerCase();
+  return { cmd: "close", which: !arg ? "newest" : arg === "all" ? "all" : arg };
+}
+
+/** The open agents that answer in the same place as `sp` (same channel, conversation and topic), oldest first. */
+export function sharing(
+  list: Spawned[],
+  sp: Pick<Spawned, "channel" | "account" | "conversationId" | "topic">,
+): Spawned[] {
+  return list.filter(
+    (x) =>
+      x.closedAt === null &&
+      x.channel === sp.channel &&
+      x.account === sp.account &&
+      x.conversationId === sp.conversationId &&
+      (x.topic ?? null) === (sp.topic ?? null),
+  );
+}
 
 /** The environment variable that carries an MCP server's token into the agent's harness. */
 export const mcpTokenVar = (server: string) => `HERDR_MCP_TOKEN_${server.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;

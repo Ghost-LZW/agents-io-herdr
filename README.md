@@ -75,6 +75,8 @@ This comes from the transcript the agent writes itself (Claude Code: `~/.claude/
 
 An agent can schedule itself through the daemon's external MCP endpoint (`mcp` with `declare: true`, a client allowed `schedule:` routes): `schedule_add` with action `wake` comes back here at its time; mode `resume` wakes the same agent (in its pane, or a new tab resuming its harness session if the pane is gone), `fresh` starts a new one on the same place.
 
+A topic can have more than one agent (another trigger there, a `fresh` wake): the bridge says so in the topic, each agent's messages then start with its name (`【ai-1a2b】`), and what the owner says goes to the newest. `/agents` lists them; `/close <name>` closes one, `/close all` all of them, a bare `/close` the newest.
+
 Only the rule's `owner` (platform-signed) is listened to. Spawned panes get no notices or live cards in the workbench; they answer where they were called.
 
 ## Requirements

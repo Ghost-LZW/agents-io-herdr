@@ -75,6 +75,8 @@ bridge 只通过 agents-io 的宿主协议（unix socket 上的 JSONL）和自�
 
 agent 可以通过守护进程的对外 MCP 端点给自己设定时（`mcp` 写 `declare: true`，客户端有 `schedule:` 权限）：`schedule_add` 的 action 为 `wake` 时，到点交回这里；mode `resume` 叫醒同一个 agent（还在它的窗格里；窗格关了就在新 tab 里恢复它的 harness 会话），`fresh` 在同一个地方新开一个 agent。
 
+一个话题里可以有不止一个 agent（在那里再叫一次、`fresh` 叫醒）：bridge 会在话题里说明，之后每个 agent 的消息都以它的名字开头（`【ai-1a2b】`），主人说的话发给最新的那个。`/agents` 列出它们；`/close <名字>` 关一个，`/close all` 全关，只发 `/close` 关最新的。
+
 只听规则里的 `owner`（平台签名的身份）。这些窗格不在工作台发通知和实时卡片，只在被叫的地方回答。
 
 ## 需要
