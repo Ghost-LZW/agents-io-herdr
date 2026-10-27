@@ -259,3 +259,8 @@ export async function startAgent(
     await sleep(500);
   }
 }
+
+/** Closes a tab (what runs in it ends). */
+export async function closeTab(h: Herdr, tabId: string): Promise<void> {
+  await h.call("tab.close", { tab_id: tabId });
+}
