@@ -17,6 +17,7 @@ import { basename } from "node:path";
 import type { Config, SpawnRule } from "./config.ts";
 import { type FeishuApi, FeishuError, isScopeError } from "./feishu.ts";
 import {
+  closeTab,
   createTab,
   createWorkspace,
   type Herdr,
@@ -79,6 +80,7 @@ import {
   firstPrompt,
   type HookRunner,
   hookEnv,
+  isClose,
   laterPrompt,
   prepareDir,
   ruleFor,
@@ -777,6 +779,7 @@ export class Bridge {
     if (!target) return;
     const text = laterPrompt(item);
     if (!text) return;
+    if (isClose(textOf(env.content))) return this.#closeSpawned(target, item);
     await this.#mark(item, "working");
     const s = this.#s;
     const pane = this.#spawnedPane(target);
@@ -849,6 +852,29 @@ export class Bridge {
     );
   }
 
+  /** The owner's `/close`: the agent's tab closes, its turn (if any) settles, the chat is not routed for it any more. */
+  async #closeSpawned(sp: Spawned, item: InboundItem): Promise<void> {
+    const now = this.#now();
+    try {
+      // Agents started before tabs were recorded: the tab of their pane.
+      const tab =
+        sp.tabId ??
+        (await listPanes(this.#o.herdr)).find((p) => p.pane_id === sp.paneId && p.terminal_id === sp.terminalId)
+          ?.tab_id;
+      if (tab) await closeTab(this.#o.herdr, tab);
+    } catch (e) {
+      this.#log(`spawn ${sp.id}: closing its tab failed: ${(e as Error).message}`);
+    }
+    sp.closedAt = now;
+    for (const m of sp.marked ?? []) await this.#markMessage(m.route, m.messageId, "none");
+    sp.marked = [];
+    this.store.save();
+    this.#log(`spawn ${sp.id}: closed by the owner`);
+    await this.#mark(item, "done");
+    await this.#spawnSay(sp, { text: this.#s.spawnClosed }, `herdr:sp:${sp.id}:closed`, item.envelope.id);
+    await this.pushBindings();
+  }
+
   /** The agent's pane, if it still runs the same program. */
   async #spawnedPane(sp: Spawned): Promise<HerdrAgent | null> {
     try {
@@ -890,6 +916,7 @@ export class Bridge {
     }
     let paneId: string;
     let terminalId: string;
+    let tabId: string | undefined;
     let label = `${rule.id}-${id.slice(0, 4)}`;
     try {
       const dir = prepareDir(rule, id);
@@ -919,6 +946,7 @@ export class Bridge {
             });
           })();
       paneId = opened.root_pane.pane_id;
+      tabId = opened.tab.tab_id;
       label = opened.tab.label || label;
       await startAgent(h, {
         name: `${rule.id}-${id}`,
@@ -943,6 +971,7 @@ export class Bridge {
       rule: rule.id,
       paneId,
       terminalId,
+      ...(tabId ? { tabId } : {}),
       channel: env.channel,
       account: env.account,
       conversationId: env.conversation.id,

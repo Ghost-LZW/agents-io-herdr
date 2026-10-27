@@ -1193,6 +1193,19 @@ describe("agents started from a message (spawn)", () => {
     expect(w.aio.acks.at(-1)).toEqual({ messageId: "m1", state: "done" });
   });
 
+  it("/close in the topic closes the agent's tab, and later words there are not for it", async () => {
+    await sendItem(w, side({ id: "m1", text: "go", topic: "m0", trigger: true }));
+    const sp = w.store.state.spawned[0];
+    await sendItem(w, side({ id: "m2", text: "/close", topic: "m0" }));
+    expect(w.herdr.actions.at(-1)).toEqual(["tab.close", { tab_id: sp?.tabId }]);
+    expect(w.store.state.spawned[0]?.closedAt).not.toBeNull();
+    expect(w.aio.delivered.at(-1)?.message.text).toBe("Closed this agent.");
+    expect(w.aio.lastTable?.bindings.some((b) => b.match.conversation === "g_1")).toBe(false);
+    const n = w.herdr.actions.length;
+    await sendItem(w, side({ id: "m3", text: "hello?", topic: "m0" }));
+    expect(w.herdr.actions).toHaveLength(n);
+  });
+
   it("waits for a new tab's shell when herdr says it is not available yet", async () => {
     w.herdr.busyStarts = 3;
     await sendItem(w, side({ id: "m1", text: "go", trigger: true }));

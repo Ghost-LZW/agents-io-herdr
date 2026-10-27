@@ -403,6 +403,11 @@ export class FakeHerdr {
   }
 
   #result(method: string, params: Record<string, unknown>): unknown {
+    if (method === "tab.close") {
+      const tab = String(params.tab_id);
+      this.agents = this.agents.filter((a) => a.tab_id !== tab);
+      return {};
+    }
     if (method === "workspace.list") return { workspaces: this.workspaces };
     if (method === "workspace.create") {
       const w = { workspace_id: `w${this.workspaces.length + 10}`, label: String(params.label) };
@@ -416,7 +421,7 @@ export class FakeHerdr {
     if (method === "tab.create") {
       const n = ++this.#made;
       const pane = `${params.workspace_id}:pn${n}`;
-      this.agents.push({ ...agentRow(pane, `term_made_${n}`), cwd: String(params.cwd) });
+      this.agents.push({ ...agentRow(pane, `term_made_${n}`), cwd: String(params.cwd), tab_id: `t${n}` });
       return {
         tab: { tab_id: `t${n}`, label: params.label },
         root_pane: { pane_id: pane, terminal_id: `term_made_${n}` },

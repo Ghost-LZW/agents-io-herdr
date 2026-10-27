@@ -17,6 +17,7 @@ export interface Strings {
   spawnNoAnswer: string;
   spawnFailed: (why: string) => string;
   spawnGone: string;
+  spawnClosed: string;
   spawnChoice: (screen: string) => string;
   overnightHead: (machine: string) => string;
   overnightItem: (place: string, agent: string, title: string, dur: string, at: string) => string;
@@ -99,6 +100,7 @@ const zh: Strings = {
   spawnNoAnswer: "（这一轮没有文字回答）",
   spawnFailed: (why) => `没能开 agent：${why}`,
   spawnGone: "这个 agent 已经结束；要继续请重新叫一个。",
+  spawnClosed: "已关掉这个 agent。",
   spawnChoice: (screen) => `它在等你选择，回复数字（或 esc）：\n${screen}`,
   overnightHead: (machine) => `**${machine} · 夜里做完的**`,
   overnightItem: (place, agent, title, dur, at) =>
@@ -216,6 +218,7 @@ const en: Strings = {
   spawnNoAnswer: "(no written answer this turn)",
   spawnFailed: (why) => `Could not start an agent: ${why}`,
   spawnGone: "This agent has ended; start another with the trigger.",
+  spawnClosed: "Closed this agent.",
   spawnChoice: (screen) => `It is waiting for a choice; reply with a number (or esc):\n${screen}`,
   overnightHead: (machine) => `**${machine} · finished overnight**`,
   overnightItem: (place, agent, title, dur, at) =>

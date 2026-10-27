@@ -21,6 +21,8 @@ export interface Spawned {
   rule: string;
   paneId: string;
   terminalId: string;
+  /** The herdr tab it runs in (closed with it). */
+  tabId?: string;
   /** The conversation (and topic) it answers in, and the message that started it. */
   channel: string;
   account: string;
@@ -257,3 +259,6 @@ export function hookEnv(rule: SpawnRule, item: InboundItem, dir: string, id: str
     HERDR_SPAWN_MESSAGE: env.id,
   };
 }
+
+/** `/close` (or `/end`) alone: the owner ends the agent of this topic. */
+export const isClose = (text: string) => /^\s*\/(?:close|end)\s*$/i.test(text);
