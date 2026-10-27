@@ -94,6 +94,7 @@ async function world(
     store,
     now: () => clock.now,
     idleMs: () => null,
+    sleep: async () => {},
     log: (s) => logs.push(s),
     ...(o.transcripts ? { transcripts: o.transcripts } : {}),
   });

@@ -328,7 +328,15 @@ export function inbound(m: Msg): InboundItem {
 
 // ---- herdr --------------------------------------------------------------------------------------
 
-const READS = new Set(["agent.list", "agent.read", "pane.list", "pane.read", "tab.list", "workspace.list"]);
+const READS = new Set([
+  "agent.list",
+  "agent.get",
+  "agent.read",
+  "pane.list",
+  "pane.read",
+  "tab.list",
+  "workspace.list",
+]);
 /** Key names the fake accepts; herdr refuses others (`invalid_key`) before writing anything. */
 const KEYS = /^(?:[1-9]|esc|enter|tab|up|down|left|right|space|backspace|ctrl\+[a-z])$/;
 
@@ -343,6 +351,8 @@ export class FakeHerdr {
   errors = new Map<string, string>();
   workspaces: { workspace_id: string; label: string }[] = [];
   #made = 0;
+  /** Panes where an agent was started and herdr has not seen it ready yet. */
+  #starting = new Set<string>();
   /** Panes whose history herdr cannot read now (a full-screen program in a dialog): only `visible` works. */
   visibleOnly = new Set<string>();
   #server: Server;
@@ -364,7 +374,14 @@ export class FakeHerdr {
           req.method.endsWith(".read") && req.params.source !== "visible" && this.visibleOnly.has(pane)
             ? `cannot read ${req.params.lines} lines while ${pane} is blocked: its alternate-screen history can only be captured by scrolling while idle. Wait and retry, or use --source visible`
             : null;
-        const err = bad ? "invalid_key" : history ? "read_unavailable" : this.errors.get(req.method);
+        const early = req.method === "agent.prompt" && this.#starting.has(pane);
+        const err = bad
+          ? "invalid_key"
+          : history
+            ? "read_unavailable"
+            : early
+              ? "agent_not_ready"
+              : this.errors.get(req.method);
         const answer = err
           ? { id: req.id, error: { code: err, message: history ?? `${req.method}: ${err}` } }
           : { id: req.id, result: this.#result(req.method, req.params) };
@@ -394,10 +411,22 @@ export class FakeHerdr {
       };
     }
     if (method === "agent.start") {
+      // Like herdr over the socket: answered at once, ready a moment later (after one agent.get).
+      const pane = String(params.pane_id);
       this.agents = this.agents.map((a) =>
-        a.pane_id === params.pane_id ? { ...a, agent: String(params.kind), agent_status: "idle" } : a,
+        a.pane_id === pane ? { ...a, agent: String(params.kind), agent_status: "unknown" } : a,
       );
-      return {};
+      this.#starting.add(pane);
+      return { agent: { pane_id: pane, launch_pending: true } };
+    }
+    if (method === "agent.get") {
+      const pane = String(params.target);
+      if (this.#starting.delete(pane)) {
+        this.agents = this.agents.map((a) => (a.pane_id === pane ? { ...a, agent_status: "idle" } : a));
+        return { agent: { pane_id: pane, launch_pending: true, interactive_ready: false, agent_status: "unknown" } };
+      }
+      const a = this.agents.find((x) => x.pane_id === pane);
+      return { agent: { ...a, interactive_ready: a?.agent_status === "idle" } };
     }
     if (method === "agent.list") return { agents: this.agents.filter((a) => a.agent) };
     if (method === "pane.list") return { panes: this.agents };
