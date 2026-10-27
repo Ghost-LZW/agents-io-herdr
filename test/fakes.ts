@@ -357,6 +357,8 @@ export class FakeHerdr {
   errors = new Map<string, string>();
   workspaces: { workspace_id: string; label: string }[] = [];
   #made = 0;
+  /** agent.start answers agent_pane_busy this many times first (a new tab's shell not ready yet). */
+  busyStarts = 0;
   /** A question every agent asks at startup (until a key answers it with enter). */
   startupDialog: string | null = null;
   /** Panes where an agent was started and herdr has not seen it ready yet. */
@@ -389,7 +391,9 @@ export class FakeHerdr {
             ? "read_unavailable"
             : early
               ? "agent_not_ready"
-              : this.errors.get(req.method);
+              : req.method === "agent.start" && this.busyStarts > 0 && this.busyStarts--
+                ? "agent_pane_busy"
+                : this.errors.get(req.method);
         const answer = err
           ? { id: req.id, error: { code: err, message: history ?? `${req.method}: ${err}` } }
           : { id: req.id, result: this.#result(req.method, req.params) };
