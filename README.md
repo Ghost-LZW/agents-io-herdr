@@ -73,6 +73,8 @@ This comes from the transcript the agent writes itself (Claude Code: `~/.claude/
 - answers in a topic under the trigger (the topic it is in, else a new one rooted at it): a progress message, edited while it works where the daemon can (`deliver.update`), settled with the answer;
 - types what the owner says next in the same topic (or in reply to one of the agent's messages) into the same agent; while it waits on a dialog, a bare number or `esc` picks.
 
+An agent can schedule itself through the daemon's external MCP endpoint (`mcp` with `declare: true`, a client allowed `schedule:` routes): `schedule_add` with action `wake` comes back here at its time; mode `resume` wakes the same agent (in its pane, or a new tab resuming its harness session if the pane is gone), `fresh` starts a new one on the same place.
+
 Only the rule's `owner` (platform-signed) is listened to. Spawned panes get no notices or live cards in the workbench; they answer where they were called.
 
 ## Requirements
