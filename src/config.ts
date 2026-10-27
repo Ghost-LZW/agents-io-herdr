@@ -68,6 +68,11 @@ export interface SpawnRule {
   preamble: string;
   /** The herdr workspace (by label) the agents' tabs go into; made when missing. */
   workspace: string;
+  /**
+   * In a direct conversation the channel may address every message to us (a self-chat): there only
+   * messages starting with this word start an agent (it is taken off); null: every addressed one does.
+   */
+  trigger: string | null;
 }
 
 export interface Paths {
@@ -196,6 +201,7 @@ function spawnRule(r: Raw, where: string, path: (p: string) => string): SpawnRul
     skills: list("skills").map(path),
     preamble: str(r.preamble, `${where}.preamble`) ?? "",
     workspace: str(r.workspace, `${where}.workspace`) ?? "ai",
+    trigger: str(r.trigger, `${where}.trigger`) || null,
   };
 }
 
