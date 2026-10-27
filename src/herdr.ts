@@ -205,6 +205,8 @@ export async function startAgent(
     args: string[];
     timeoutMs?: number;
     sleep?: (ms: number) => Promise<void>;
+    /** A dialog at startup: the keys that answer it (from what the screen says), or null to give up. */
+    onDialog?: (screen: string) => string[] | null;
   },
 ): Promise<void> {
   const timeoutMs = o.timeoutMs ?? 60_000;
@@ -215,14 +217,33 @@ export async function startAgent(
     timeoutMs + 10_000,
   );
   const until = Date.now() + timeoutMs;
+  let answered = 0;
   for (;;) {
     const r = await h.call<{
       agent?: { interactive_ready?: boolean; launch_pending?: boolean; agent_status?: string };
     }>("agent.get", { target: o.paneId });
     const a = r.agent;
     if (a?.interactive_ready) return;
-    if (a?.agent_status === "blocked")
-      throw new HerdrError("agent_not_ready", `${o.kind} is waiting on a dialog at startup`);
+    if (a?.agent_status === "blocked") {
+      const shown = await h.call<{ read: { text: string } }>("agent.read", {
+        target: o.paneId,
+        source: "visible",
+        lines: 40,
+      });
+      const screen = shown.read?.text ?? "";
+      const keys = answered < 3 ? (o.onDialog?.(screen) ?? null) : null;
+      if (!keys) {
+        const ask = screen
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .slice(-4)
+          .join(" / ");
+        throw new HerdrError("agent_not_ready", `${o.kind} is waiting on a dialog at startup: ${ask.slice(0, 300)}`);
+      }
+      answered++;
+      await h.call("agent.send_keys", { target: o.paneId, keys });
+    }
     if (Date.now() > until)
       throw new HerdrError("agent_not_ready", `${o.kind} was not ready within ${Math.round(timeoutMs / 1000)} s`);
     await sleep(500);

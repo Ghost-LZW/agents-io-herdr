@@ -59,6 +59,8 @@ export class FakeAio {
   refuse: ((d: Delivery) => string | null) | null = null;
   /** Features `host.hello` answers. */
   features = ["host.takeover"];
+  /** `message.ack` requests, in order. */
+  readonly acks: { messageId: string; state: string }[] = [];
   /** `deliver.update` requests, in order. */
   readonly updates: Frame[] = [];
   updateMessage(f: Frame | undefined): RenderedMessage {
@@ -200,6 +202,10 @@ export class FakeAio {
           };
       this.#results.set(d.operationId, r);
       return this.#reply(c, id, r);
+    }
+    if (f.type === "message.ack") {
+      this.acks.push({ messageId: String(f.messageId), state: String(f.state) });
+      return this.#reply(c, id, { messageId: f.messageId, state: f.state });
     }
     if (f.type === "deliver.update") {
       this.updates.push(f);
@@ -351,6 +357,8 @@ export class FakeHerdr {
   errors = new Map<string, string>();
   workspaces: { workspace_id: string; label: string }[] = [];
   #made = 0;
+  /** A question every agent asks at startup (until a key answers it with enter). */
+  startupDialog: string | null = null;
   /** Panes where an agent was started and herdr has not seen it ready yet. */
   #starting = new Set<string>();
   /** Panes whose history herdr cannot read now (a full-screen program in a dialog): only `visible` works. */
@@ -421,6 +429,14 @@ export class FakeHerdr {
     }
     if (method === "agent.get") {
       const pane = String(params.target);
+      if (this.startupDialog && this.#starting.has(pane)) {
+        this.agents = this.agents.map((a) => (a.pane_id === pane ? { ...a, agent_status: "blocked" } : a));
+        this.screens.set(pane, this.startupDialog);
+        return { agent: { pane_id: pane, launch_pending: false, interactive_ready: false, agent_status: "blocked" } };
+      }
+      if (this.#starting.has(pane) && this.agents.find((a) => a.pane_id === pane)?.agent_status === "blocked") {
+        this.agents = this.agents.map((a) => (a.pane_id === pane ? { ...a, agent_status: "unknown" } : a));
+      }
       if (this.#starting.delete(pane)) {
         this.agents = this.agents.map((a) => (a.pane_id === pane ? { ...a, agent_status: "idle" } : a));
         return { agent: { pane_id: pane, launch_pending: true, interactive_ready: false, agent_status: "unknown" } };
@@ -434,6 +450,10 @@ export class FakeHerdr {
     if (method === "agent.read") return { read: { text: this.screens.get(String(params.target)) ?? "" } };
     if (method === "pane.read") return { read: { text: this.screens.get(String(params.pane_id)) ?? "" } };
     if (method.endsWith("send_keys") && (params.keys as string[]).some((k) => !KEYS.test(k))) return null;
+    if (method === "agent.send_keys" && this.startupDialog && (params.keys as string[]).at(-1) === "enter") {
+      // The startup question answered: the agent goes on starting.
+      this.startupDialog = null;
+    }
     return {};
   }
 

@@ -1161,6 +1161,43 @@ describe("agents started from a message (spawn)", () => {
     expect(lstatSync(join(tmp.dir, ".claude/skills/skill-x")).isSymbolicLink()).toBe(true);
   });
 
+  it("answers the harness's trust question at startup, and marks the owner's message working, then done", async () => {
+    await w.done();
+    w = await world({
+      transcripts: { turn: async () => structuredClone(answer) },
+      aioFeatures: ["host.takeover", "deliver.update", "message.ack"],
+      config: { notify: { live: false }, spawn: [{ ...w.cfg.spawn[0], skills: [] }] },
+    });
+    await bind(w);
+    w.herdr.startupDialog =
+      "Quick safety check: Is this a project you created or one you trust?\n❯ No, exit\n  Yes, I trust this folder";
+    await sendItem(w, side({ id: "m1", text: "go", trigger: true }));
+    expect(w.herdr.actions.map(([m]) => m)).toEqual([
+      "workspace.create",
+      "tab.create",
+      "agent.start",
+      "agent.send_keys",
+      "agent.prompt",
+    ]);
+    expect(w.herdr.calls.find(([m]) => m === "agent.send_keys")?.[1].keys).toEqual(["down", "enter"]);
+    expect(w.aio.acks).toEqual([{ messageId: "m1", state: "working" }]);
+    const pane = w.store.state.spawned[0]?.paneId ?? "";
+    w.herdr.agents = w.herdr.agents.map((a) => (a.pane_id === pane ? { ...a, agent_status: "working" } : a));
+    await run(w, 2);
+    answer.answer = "Done.";
+    w.herdr.agents = w.herdr.agents.map((a) => (a.pane_id === pane ? { ...a, agent_status: "idle" } : a));
+    await run(w, 6);
+    expect(w.aio.acks.at(-1)).toEqual({ messageId: "m1", state: "done" });
+  });
+
+  it("gives up on a startup dialog it does not know, saying what it asks", async () => {
+    w.herdr.startupDialog = "Choose your theme\n❯ 1. Dark\n  2. Light";
+    await sendItem(w, side({ id: "m1", text: "go", trigger: true }));
+    expect(w.aio.delivered.at(-1)?.message.text).toMatch(
+      /^Could not start an agent: agent_not_ready: claude is waiting on a dialog at startup: .*Choose your theme/,
+    );
+  });
+
   it("tells the owner when the agent cannot start, and ignores the trigger from anyone else", async () => {
     w.herdr.errors.set("agent.start", "agent_not_ready");
     await sendItem(w, side({ id: "m1", text: "go", trigger: true }));
