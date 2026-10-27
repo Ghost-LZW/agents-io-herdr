@@ -159,3 +159,24 @@ export function spawnedRoute(s: Spawned, replyTo?: string): ReplyRoute {
     replyToMessageId: replyTo ?? s.startMessageId,
   };
 }
+
+/**
+ * Whether an addressed message starts an agent, and its words without the trigger. Outside a
+ * direct conversation the channel only addresses the trigger; in one, `rule.trigger` decides.
+ */
+export function triggered(rule: SpawnRule, item: InboundItem): { start: boolean; item: InboundItem } {
+  const env = item.envelope;
+  if (env.admission === "observe") return { start: false, item };
+  if (env.conversation.kind !== "dm" || !rule.trigger) return { start: true, item };
+  const t = rule.trigger;
+  const first = env.content.findIndex((c) => c.type === "text");
+  const block = env.content[first];
+  if (!block || block.type !== "text") return { start: false, item };
+  const words = block.text.trimStart();
+  const next = words.charAt(t.length);
+  if (!words.startsWith(t) || (next !== "" && !/\s/.test(next))) return { start: false, item };
+  const content = env.content.map((c, i) =>
+    i === first ? { type: "text" as const, text: words.slice(t.length).trimStart() } : c,
+  );
+  return { start: true, item: { ...item, input: { ...item.input, content }, envelope: { ...env, content } } };
+}

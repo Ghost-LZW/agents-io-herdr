@@ -83,6 +83,7 @@ import {
   spawnedFor,
   spawnedRoute,
   topicOf,
+  triggered,
 } from "./spawn.ts";
 import {
   clearSetup,
@@ -755,9 +756,11 @@ export class Bridge {
   async #onSpawnChannel(rule: SpawnRule, item: InboundItem): Promise<void> {
     const env = item.envelope;
     const st = this.store.state;
-    const target = spawnedFor(st.spawned, item, repliedTo(item));
     // The trigger starts a new agent (also in a topic that has one: the owner asked for another).
-    if (env.admission === "dispatch" || (!target && env.admission !== "observe")) return this.#spawn(rule, item);
+    const t = triggered(rule, item);
+    if (t.start) return this.#spawn(rule, t.item);
+    const target =
+      spawnedFor(st.spawned, item, repliedTo(item)) ?? (env.conversation.kind === "dm" ? this.#latestIn(item) : null);
     if (!target) return;
     const text = laterPrompt(item);
     if (!text) return;
@@ -783,6 +786,22 @@ export class Bridge {
     target.lastAt = this.#now();
     this.store.save();
     this.#log(`spawn ${target.id}: ${keyed ? "key" : `prompt (${text.length} chars)`}`);
+  }
+
+  /** In a direct conversation without topics: the newest agent running there. */
+  #latestIn(item: InboundItem): Spawned | null {
+    const env = item.envelope;
+    return (
+      this.store.state.spawned
+        .filter(
+          (x) =>
+            x.closedAt === null &&
+            x.channel === env.channel &&
+            x.account === env.account &&
+            x.conversationId === env.conversation.id,
+        )
+        .at(-1) ?? null
+    );
   }
 
   /** The agent's pane, if it still runs the same program. */

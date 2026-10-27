@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AioClient } from "../src/aio.ts";
 import { Bridge, CONSUMER, HOST_NAME } from "../src/bridge.ts";
-import type { Config } from "../src/config.ts";
+import type { Config, SpawnRule } from "../src/config.ts";
 import { FeishuApi } from "../src/feishu.ts";
 import { herdrClient } from "../src/herdr.ts";
 import type { ContentBlock, InboundItem } from "../src/protocol.ts";
@@ -1127,6 +1127,28 @@ describe("agents started from a message (spawn)", () => {
     reply.input.content = reply.envelope.content;
     await sendItem(w, reply);
     expect(w.herdr.actions.at(-1)).toEqual(["agent.send_keys", { target: pane, keys: ["1"] }]);
+  });
+
+  it("in a direct chat that addresses everything, only the rule's trigger starts an agent; the rest goes to it", async () => {
+    w.cfg.spawn[0] = { ...(w.cfg.spawn[0] as SpawnRule), trigger: "/go" };
+    const dm = (id: string, text: string) => {
+      const it = side({ id, text, trigger: true, chat: "self" });
+      it.envelope.conversation = { id: "self", kind: "dm" };
+      return it;
+    };
+    await sendItem(w, dm("d1", "just a note to myself"));
+    expect(w.store.state.spawned).toHaveLength(0);
+    await sendItem(w, dm("d2", "/go sum up my day"));
+    expect(w.store.state.spawned).toHaveLength(1);
+    expect(String(w.herdr.calls.findLast(([m]) => m === "agent.prompt")?.[1].text)).toMatch(
+      /What they asked:\nsum up my day$/,
+    );
+    await sendItem(w, dm("d3", "only the morning"));
+    expect(w.store.state.spawned).toHaveLength(1);
+    expect(w.herdr.actions.at(-1)).toEqual([
+      "agent.prompt",
+      { target: w.store.state.spawned[0]?.paneId, text: "only the morning" },
+    ]);
   });
 
   it("tells the owner when the agent cannot start, and ignores the trigger from anyone else", async () => {
