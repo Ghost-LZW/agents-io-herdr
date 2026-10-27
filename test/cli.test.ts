@@ -183,6 +183,24 @@ describe("the project's daemon", () => {
     expect(() => testConfig(tmp.dir, { spawn: [{ channel: "side", account: "me" }] })).toThrow(
       /spawn\[0\]\.owner is required/,
     );
+    const h = testConfig(tmp.dir, {
+      spawn: [
+        {
+          channel: "side",
+          account: "me",
+          owner: "u1",
+          before: ["a b", ["c", "d"], { run: "e", timeoutSec: 5, required: true }],
+        },
+      ],
+    });
+    expect(h.spawn[0]?.before).toEqual([
+      { run: ["/bin/sh", "-c", "a b"], timeoutMs: 60_000, required: false },
+      { run: ["c", "d"], timeoutMs: 60_000, required: false },
+      { run: ["/bin/sh", "-c", "e"], timeoutMs: 5000, required: true },
+    ]);
+    expect(() =>
+      testConfig(tmp.dir, { spawn: [{ channel: "s", account: "a", owner: "o", before: [{ run: [] }] }] }),
+    ).toThrow(/before\[0\]\.run/);
   });
 });
 

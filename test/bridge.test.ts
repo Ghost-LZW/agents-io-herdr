@@ -11,6 +11,7 @@ import type { Config, SpawnRule } from "../src/config.ts";
 import { FeishuApi } from "../src/feishu.ts";
 import { herdrClient } from "../src/herdr.ts";
 import type { ContentBlock, InboundItem } from "../src/protocol.ts";
+import type { HookRunner } from "../src/spawn.ts";
 import { Store, writeSetup } from "../src/store.ts";
 import type { TranscriptSource, Turn } from "../src/transcript.ts";
 import {
@@ -56,6 +57,7 @@ async function world(
     config?: Record<string, unknown>;
     transcripts?: TranscriptSource;
     aioFeatures?: string[];
+    runHook?: HookRunner;
   } = {},
 ): Promise<World> {
   const tmp = tempDir();
@@ -95,6 +97,7 @@ async function world(
     now: () => clock.now,
     idleMs: () => null,
     sleep: async () => {},
+    ...(o.runHook ? { runHook: o.runHook } : {}),
     log: (s) => logs.push(s),
     ...(o.transcripts ? { transcripts: o.transcripts } : {}),
   });
@@ -1196,6 +1199,49 @@ describe("agents started from a message (spawn)", () => {
     expect(w.aio.delivered.at(-1)?.message.text).toMatch(
       /^Could not start an agent: agent_not_ready: claude is waiting on a dialog at startup: .*Choose your theme/,
     );
+  });
+
+  it("runs the rule's hooks before the agent, in its directory with its environment; a failing one is logged, a required one stops it", async () => {
+    const ran: { run: string[]; cwd: string; env: Record<string, string> }[] = [];
+    let exit = 0;
+    await w.done();
+    w = await world({
+      transcripts: { turn: async () => structuredClone(answer) },
+      runHook: async (h, o) => {
+        ran.push({ run: h.run, ...o });
+        return { code: h.required ? exit : 1, output: "fetch failed: no route" };
+      },
+      config: {
+        notify: { live: false },
+        spawn: [
+          { ...w.cfg.spawn[0], skills: [], before: ["sync-facts --quiet", { run: ["check-ready"], required: true }] },
+        ],
+      },
+    });
+    await bind(w);
+    await sendItem(w, side({ id: "m1", text: "go", topic: "m0", trigger: true }));
+    expect(ran.map((r) => r.run)).toEqual([["/bin/sh", "-c", "sync-facts --quiet"], ["check-ready"]]);
+    const sp = w.store.state.spawned[0];
+    expect(ran[0]).toMatchObject({
+      cwd: join(tmp.dir, sp?.id ?? ""),
+      env: {
+        SIDE_BASE: "http://127.0.0.1:1",
+        HERDR_SPAWN_RULE: "ai",
+        HERDR_SPAWN_CONVERSATION: "g_1",
+        HERDR_SPAWN_TOPIC: "m0",
+        HERDR_SPAWN_MESSAGE: "m1",
+      },
+    });
+    expect(w.logs.filter((l) => l.includes("hook 1"))).toEqual([
+      expect.stringMatching(/hook 1 \(sh\) exited 1: fetch failed/),
+    ]);
+    expect(w.herdr.actions.map(([m]) => m)).toContain("agent.start");
+
+    exit = 2;
+    const n = w.herdr.actions.length;
+    await sendItem(w, side({ id: "m2", text: "again", trigger: true }));
+    expect(w.herdr.actions).toHaveLength(n);
+    expect(w.aio.delivered.at(-1)?.message.text).toMatch(/^Could not start an agent: hook 2 \(check-ready\) exited 2/);
   });
 
   it("tells the owner when the agent cannot start, and ignores the trigger from anyone else", async () => {

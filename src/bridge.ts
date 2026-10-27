@@ -13,6 +13,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
+import { basename } from "node:path";
 import type { Config, SpawnRule } from "./config.ts";
 import { type FeishuApi, FeishuError, isScopeError } from "./feishu.ts";
 import {
@@ -76,9 +77,12 @@ import { type DialogOption, optionsOf, summaryOf, tailOf } from "./screen.ts";
 import { lookup, realSecretSource, type SecretSource } from "./secrets.ts";
 import {
   firstPrompt,
+  type HookRunner,
+  hookEnv,
   laterPrompt,
   prepareDir,
   ruleFor,
+  runHook,
   type Spawned,
   spawnedFor,
   spawnedRoute,
@@ -131,6 +135,8 @@ export interface BridgeOptions {
   transcripts?: TranscriptSource;
   /** Where `spawn` environment values (`env:…`, `keychain:…`) are looked up. */
   secrets?: SecretSource;
+  /** Runs `spawn` hooks (tests replace it). */
+  runHook?: HookRunner;
   /** Waiting between polls (tests make it instant). */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -174,6 +180,7 @@ interface PaneReply {
 /** The reaction that says "sent" on the owner's message (Feishu's emoji list). */
 const ACK_EMOJI = "DONE";
 
+const oneLine = (t: string) => t.replace(/\s+/g, " ").trim();
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const newId = () => randomBytes(6).toString("hex");
 
@@ -886,10 +893,21 @@ export class Bridge {
     let label = `${rule.id}-${id.slice(0, 4)}`;
     try {
       const dir = prepareDir(rule, id);
+      const env = this.#envOf(rule);
+      for (const [i, hook] of rule.before.entries()) {
+        const r = await (this.#o.runHook ?? runHook)(hook, {
+          cwd: dir,
+          env: { ...env, ...hookEnv(rule, item, dir, id) },
+        });
+        if (r.code === 0) continue;
+        const why = `hook ${i + 1} (${basename(hook.run[0] ?? "")}) ${r.code === null ? "did not finish" : `exited ${r.code}`}`;
+        this.#log(`spawn ${rule.id}: ${why}: ${oneLine(r.output).slice(-300)}`);
+        if (hook.required) throw new Error(`${why}: ${oneLine(r.output).slice(-200)}`);
+      }
       const h = this.#o.herdr;
       const ws = (await listWorkspaces(h)).find((w) => w.label === rule.workspace);
       const opened = ws
-        ? await createTab(h, { workspaceId: ws.workspace_id, label, cwd: dir, env: this.#envOf(rule) })
+        ? await createTab(h, { workspaceId: ws.workspace_id, label, cwd: dir, env })
         : await (async () => {
             // The workspace's own first tab has no environment of its own: a tab in it does.
             const w = await createWorkspace(h, { label: rule.workspace, cwd: dir });
