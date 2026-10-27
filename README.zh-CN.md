@@ -70,7 +70,7 @@ bridge 只通过 agents-io 的宿主协议（unix socket 上的 JSONL）和自�
 - 在 herdr 的 `workspace` 工作区（默认 `ai`）开一个 tab，目录是 `cwd` 下新建的一个，规则的 `skills` 链接进 `.claude/skills` 和 `.agents/skills`，环境变量用 `env`（值可写 `env:…`、`keychain:…`）；
 - 在那里依次运行规则的 `before` 钩子（一行命令或一个列表；`timeoutSec` 默认 60；`required: true` 时失败就不开 agent，否则只记日志），环境变量是规则的 `env`，外加 `HERDR_SPAWN_RULE`、`_ID`、`_DIR`、`_CHANNEL`、`_ACCOUNT`、`_CONVERSATION`、`_TOPIC`、`_MESSAGE`；
 - 启动 agent（`kind`、`args`），告诉它规则的 `preamble`、在哪被叫的（会话、话题、消息 id）、引用的消息和主人的话；
-- 在那里回答：先发一条进度消息，守护进程能改已发消息（`deliver.update`）时边做边改，最后改成回答；
+- 在触发消息下的话题里回答（它本来在话题里就用那个话题，否则以它为根开一个新话题）：先发一条进度消息，守护进程能改已发消息（`deliver.update`）时边做边改，最后改成回答；
 - 主人之后在同一个话题里（或回复 agent 的消息）说的话，交给同一个 agent；它在等选择时，回一个数字或 `esc` 就是选。
 
 只听规则里的 `owner`（平台签名的身份）。这些窗格不在工作台发通知和实时卡片，只在被叫的地方回答。

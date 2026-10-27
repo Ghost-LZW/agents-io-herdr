@@ -1188,6 +1188,23 @@ describe("agents started from a message (spawn)", () => {
     );
   });
 
+  it("a trigger outside a topic opens a topic under itself: the answer and later words go there", async () => {
+    await sendItem(w, side({ id: "q1", text: "what about this?", trigger: true }));
+    const sp = w.store.state.spawned[0];
+    expect(sp?.topic).toBe("q1");
+    expect(w.aio.delivered.at(-1)?.route).toEqual({
+      channel: SIDE,
+      account: "me",
+      conversationId: "g_1",
+      threadId: "q1",
+      replyToMessageId: "q1",
+    });
+    // The owner's next words in that new topic reach the same agent.
+    const n = w.herdr.actions.length;
+    await sendItem(w, side({ id: "q2", text: "and then?", topic: "q1" }));
+    expect(w.herdr.actions.slice(n)).toEqual([["agent.prompt", { target: sp?.paneId, text: "and then?" }]]);
+  });
+
   it("presses a key when the agent waits on a dialog, and says so when it asks", async () => {
     await sendItem(w, side({ id: "m1", text: "go", trigger: true }));
     const pane = w.store.state.spawned[0]?.paneId ?? "";
