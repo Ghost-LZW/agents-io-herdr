@@ -146,6 +146,7 @@ describe("redact", () => {
       ["DATABASE_PASSWORD=hunter2hunter2", `DATABASE_PASSWORD=${REDACTED}`],
       ["postgresql://app:pa55w0rd@db.example:5432/app", `postgresql://app:${REDACTED}@db.example`],
       ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.abcdefghijklmnop", REDACTED],
+      ["author: Jane Doe <jane.doe@example.com>", "<…@example.com>"],
     ];
     for (const [input, expected] of cases) {
       const r = redact(input);
