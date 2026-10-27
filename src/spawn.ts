@@ -48,6 +48,8 @@ export interface Spawned {
   turnAt: number | null;
   /** herdr saw the agent work (or ask) since `turnAt`. */
   sawWork: boolean;
+  /** The harness's own session id (herdr `agent_session`), to resume it after its pane is gone. */
+  session?: string;
   /** The owner's messages this turn answers (marked working; done when the answer goes out). */
   marked?: { route: ReplyRoute; messageId: string }[];
   startedAt: number;
@@ -203,13 +205,22 @@ function files(content: ContentBlock[], blobDir: string | null): string {
  * The agent's `.mcp.json` (Claude Code reads project MCP servers from it), with the tokens filled in:
  * written 0600 next to the skills; an existing file is replaced (the servers are the rule's).
  */
-export function writeMcp(dir: string, servers: Record<string, { url: string; token?: string }>): void {
+export function writeMcp(
+  dir: string,
+  servers: Record<string, { url: string; token?: string; declare?: boolean }>,
+): void {
   if (!Object.keys(servers).length) return;
+  // No secret in the file (agents may share the directory): the token and which agent this is come
+  // from the agent's environment (`mcpTokenVar`, HERDR_SPAWN_ID), which Claude Code expands in headers.
   const mcpServers = Object.fromEntries(
-    Object.entries(servers).map(([k, v]) => [
-      k,
-      { type: "http", url: v.url, ...(v.token ? { headers: { Authorization: `Bearer ${v.token}` } } : {}) },
-    ]),
+    Object.entries(servers).map(([k, v]) => {
+      const headers = {
+        ...(v.token ? { Authorization: `Bearer \${${mcpTokenVar(k)}}` } : {}),
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: Claude Code expands it from the agent's environment.
+        ...(v.declare ? { "X-Agents-IO-Declared": "spawn:${HERDR_SPAWN_ID}" } : {}),
+      };
+      return [k, { type: "http", url: v.url, ...(Object.keys(headers).length ? { headers } : {}) }];
+    }),
   );
   writeFileSync(join(dir, ".mcp.json"), `${JSON.stringify({ mcpServers }, null, 2)}\n`, { mode: 0o600 });
   chmodSync(join(dir, ".mcp.json"), 0o600);
@@ -364,3 +375,17 @@ export function hookEnv(rule: SpawnRule, item: InboundItem, dir: string, id: str
 
 /** `/close` (or `/end`) alone: the owner ends the agent of this topic. */
 export const isClose = (text: string) => /^\s*\/(?:close|end)\s*$/i.test(text);
+
+/** The environment variable that carries an MCP server's token into the agent's harness. */
+export const mcpTokenVar = (server: string) => `HERDR_MCP_TOKEN_${server.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
+
+/** Who a wake schedule is for: its declared `spawn:<id>`; null for anything else. */
+export function wakeOf(item: InboundItem): { mode: "resume" | "fresh"; spawnId: string | null; text: string } | null {
+  const c = item.input.channelContext ?? {};
+  const mode = c["schedule.wake"];
+  if (item.envelope.channel !== "schedule" || (mode !== "resume" && mode !== "fresh")) return null;
+  const declared = typeof c["schedule.declared"] === "string" ? c["schedule.declared"] : "";
+  const spawnId = declared.startsWith("spawn:") ? declared.slice("spawn:".length) : null;
+  const words = text(item.input.content ?? []).replace(/^\[schedule [^\]]*\]\s*/, "");
+  return { mode, spawnId, text: words };
+}

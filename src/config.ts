@@ -81,7 +81,7 @@ export interface SpawnRule {
    * MCP servers written into the agent's `.mcp.json` (Claude Code's project servers): name → URL
    * and a bearer token reference (`env:…`, `keychain:…`, looked up when the agent starts).
    */
-  mcp: Record<string, { url: string; token?: SecretRef }>;
+  mcp: Record<string, { url: string; token?: SecretRef; declare?: boolean }>;
   /** Said to the agent before the owner's words (the place, how to read it, how to answer). */
   preamble: string;
   /** The herdr workspace (by label) the agents' tabs go into; made when missing. */
@@ -241,7 +241,7 @@ function spawnRule(r: Raw, where: string, path: (p: string) => string): SpawnRul
         const token = str(e.token, `${where}.mcp.${k}.token`);
         if (token && !/^(env|keychain):./.test(token))
           throw new ConfigError(`${where}.mcp.${k}.token must be "env:NAME" or "keychain:SERVICE"`);
-        return [k, { url, ...(token ? { token } : {}) }];
+        return [k, { url, ...(token ? { token } : {}), ...(e.declare === true ? { declare: true } : {}) }];
       }),
     ),
     preamble: str(r.preamble, `${where}.preamble`) ?? "",

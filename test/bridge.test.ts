@@ -11,7 +11,7 @@ import type { Config, SpawnRule } from "../src/config.ts";
 import { FeishuApi } from "../src/feishu.ts";
 import { herdrClient } from "../src/herdr.ts";
 import type { ContentBlock, InboundItem } from "../src/protocol.ts";
-import type { HookRunner } from "../src/spawn.ts";
+import type { HookRunner, Spawned } from "../src/spawn.ts";
 import { Store, writeSetup } from "../src/store.ts";
 import type { TranscriptSource, Turn } from "../src/transcript.ts";
 import {
@@ -1137,7 +1137,7 @@ describe("agents started from a message (spawn)", () => {
     );
   });
 
-  it("writes the rule's MCP servers into the agent's .mcp.json (0600), tokens looked up", async () => {
+  it("writes the rule's MCP servers into the agent's .mcp.json (0600), tokens only in its environment", async () => {
     await w.done();
     w = await world({
       transcripts: { turn: async () => structuredClone(answer) },
@@ -1167,10 +1167,15 @@ describe("agents started from a message (spawn)", () => {
         agents_io: {
           type: "http",
           url: "http://127.0.0.1:7465/mcp",
-          headers: { Authorization: "Bearer t0ken-for-the-agent-0123" },
+          // biome-ignore lint/suspicious/noTemplateCurlyInString: what Claude Code expands from the environment
+          headers: { Authorization: "Bearer ${HERDR_MCP_TOKEN_AGENTS_IO}" },
         },
       },
     });
+    // The token itself is in the agent's environment only (its tab), never in the file.
+    expect(readFileSync(f, "utf8")).not.toContain("t0ken-for-the-agent-0123");
+    const tab = w.herdr.calls.find(([m]) => m === "tab.create")?.[1];
+    expect(tab?.env).toMatchObject({ HERDR_MCP_TOKEN_AGENTS_IO: "t0ken-for-the-agent-0123", HERDR_SPAWN_ID: sp?.id });
     // Approved for Claude Code, so it does not ask at startup.
     expect(JSON.parse(readFileSync(join(tmp.dir, sp?.id ?? "", ".claude/settings.local.json"), "utf8"))).toEqual({
       enabledMcpjsonServers: ["agents_io"],
@@ -1207,6 +1212,49 @@ describe("agents started from a message (spawn)", () => {
     const n = w.herdr.actions.length;
     await sendItem(w, side({ id: "q2", text: "and then?", topic: "q1" }));
     expect(w.herdr.actions.slice(n)).toEqual([["agent.prompt", { target: sp?.paneId, text: "and then?" }]]);
+  });
+
+  it("a wake schedule: resume = the same agent, in its pane, or resumed in a new tab once the pane is gone; fresh = a new agent", async () => {
+    await sendItem(w, side({ id: "m1", text: "watch the build", topic: "m0", trigger: true }));
+    const sp = { ...(w.store.state.spawned[0] as Spawned) };
+    // herdr names the harness session; the bridge keeps it for a later resume.
+    w.herdr.agents = w.herdr.agents.map((a) =>
+      a.pane_id === sp.paneId ? { ...a, agent_session: { kind: "id", value: "sess-123" } } : a,
+    );
+    await run(w, 2);
+    expect(w.store.state.spawned[0]?.session).toBe("sess-123");
+    const wake = (id: string, mode: "resume" | "fresh"): InboundItem => {
+      const base = side({ id, text: `[schedule t] check the build again` });
+      return {
+        ...base,
+        channelRef: `schedule:${id}`,
+        input: {
+          ...base.input,
+          channelContext: { schedule: "t", "schedule.wake": mode, "schedule.declared": `spawn:${sp.id}` },
+        },
+        envelope: { ...base.envelope, channel: "schedule", sender: { channelUserId: "schedule:t", evidence: "none" } },
+      };
+    };
+    expect(w.aio.lastTable?.bindings.find((b) => b.id === "herdr:wake")?.match).toEqual({ channel: "schedule" });
+    let n = w.herdr.actions.length;
+    await sendItem(w, wake("k1", "resume"));
+    expect(w.herdr.actions.slice(n)).toEqual([
+      ["agent.prompt", { target: sp.paneId, text: "[scheduled] check the build again" }],
+    ]);
+    // The pane is gone: a new tab resumes the same harness session, under the same agent id.
+    w.herdr.agents = w.herdr.agents.filter((a) => a.pane_id !== sp.paneId);
+    n = w.herdr.actions.length;
+    await sendItem(w, wake("k2", "resume"));
+    const start = w.herdr.calls.filter(([m]) => m === "agent.start").at(-1)?.[1];
+    expect(start?.args).toEqual(["--model", "m", "--resume", "sess-123"]);
+    expect(w.herdr.actions.slice(n).at(-1)?.[0]).toBe("agent.prompt");
+    expect(w.store.state.spawned[0]).toMatchObject({ id: sp.id, closedAt: null });
+    expect(w.store.state.spawned[0]?.paneId).not.toBe(sp.paneId);
+    // fresh: another agent, same place.
+    await sendItem(w, wake("k3", "fresh"));
+    expect(w.store.state.spawned).toHaveLength(2);
+    expect(w.store.state.spawned[1]).toMatchObject({ conversationId: "g_1", topic: "m0" });
+    expect(w.store.state.spawned[1]?.session).toBeUndefined();
   });
 
   it("presses a key when the agent waits on a dialog, and says so when it asks", async () => {

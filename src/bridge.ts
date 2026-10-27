@@ -83,6 +83,7 @@ import {
   hookEnv,
   isClose,
   laterPrompt,
+  mcpTokenVar,
   prepareDir,
   ruleFor,
   runHook,
@@ -92,6 +93,7 @@ import {
   startupAnswer,
   topicOf,
   triggered,
+  wakeOf,
   writeMcp,
 } from "./spawn.ts";
 import {
@@ -319,6 +321,14 @@ export class Bridge {
     }
     // Agents started from a message: the owner's trigger (the channel hints `dispatch`), and in a
     // topic (or a group) where one of them runs, what the owner says next.
+    // Wakes of spawned agents (their schedules with action wake) come back to this host.
+    if (this.#c.spawn.length)
+      b.push({
+        id: "herdr:wake",
+        match: { channel: "schedule" },
+        on: "host",
+        note: "wake schedules of spawned agents",
+      });
     for (const r of this.#c.spawn) {
       const m = { channel: r.channel, account: r.account, senders: [r.owner] };
       b.push({
@@ -904,6 +914,76 @@ export class Bridge {
     await this.pushBindings();
   }
 
+  /**
+   * A wake schedule fired (an agent's `schedule_add` with action wake). `resume`: the agent that set
+   * it gets the words, in its pane, or (pane gone) in a new tab resuming its harness session;
+   * `fresh`: a new agent starts on them, answering in the same place. Either way the answer goes
+   * where the agent answers.
+   */
+  async #onWake(
+    item: InboundItem,
+    w: { mode: "resume" | "fresh"; spawnId: string | null; text: string },
+  ): Promise<void> {
+    const sp = w.spawnId ? this.store.state.spawned.find((x) => x.id === w.spawnId) : undefined;
+    const rule = this.#c.spawn.find((r) => r.id === sp?.rule);
+    if (!sp || !rule) {
+      this.#log(`wake for ${w.spawnId ?? "nobody"}: no such spawned agent; dropped`);
+      return;
+    }
+    const prompt = `[scheduled] ${w.text}`;
+    const now = this.#now();
+    try {
+      if (w.mode === "resume") {
+        const alive = sp.closedAt === null ? await this.#spawnedPane(sp) : null;
+        if (!alive) {
+          // Its pane is gone: the same harness session, carried on in a new tab.
+          const opened = await this.#openAgent(rule, item, sp.id, sp.session);
+          Object.assign(sp, {
+            paneId: opened.paneId,
+            terminalId: opened.terminalId,
+            tabId: opened.tabId,
+            closedAt: null,
+          });
+          await this.pushBindings();
+        }
+        await promptAgent(this.#o.herdr, sp.paneId, prompt);
+        sp.turnAt ??= now;
+        sp.lastAt = now;
+        this.store.save();
+        this.#log(`wake ${sp.id}: resumed${alive ? "" : " in a new tab"}`);
+        return;
+      }
+      // fresh: a new agent on the same place, told what it is for.
+      const id = newId();
+      const opened = await this.#openAgent(rule, item, id);
+      await promptAgent(this.#o.herdr, opened.paneId, `${rule.preamble.trim()}\n\n${prompt}`.trim());
+      const { session: _resumed, ...place } = sp;
+      this.store.state.spawned.push({
+        ...place,
+        id,
+        paneId: opened.paneId,
+        terminalId: opened.terminalId,
+        tabId: opened.tabId,
+        sent: [],
+        progressId: null,
+        progressSeq: 0,
+        turnAt: now,
+        sawWork: false,
+        marked: [],
+        startedAt: now,
+        lastAt: now,
+        closedAt: null,
+      });
+      this.store.save();
+      await this.pushBindings();
+      this.#log(`wake ${sp.id}: a fresh agent ${id}`);
+    } catch (e) {
+      const why = e instanceof HerdrError ? `${e.code}: ${e.message}` : (e as Error).message;
+      this.#log(`wake ${sp.id} failed: ${why}`);
+      await this.#spawnSay(sp, { text: this.#s.spawnFailed(why) }, `herdr:wake:${sha(item.channelRef).slice(0, 16)}`);
+    }
+  }
+
   /** The agent's pane, if it still runs the same program. */
   async #spawnedPane(sp: Spawned): Promise<HerdrAgent | null> {
     try {
@@ -917,16 +997,70 @@ export class Bridge {
   }
 
   /** The rule's MCP servers with their tokens looked up (`env:…`, `keychain:…`). */
-  #mcpOf(rule: SpawnRule): Record<string, { url: string; token?: string }> {
+  /** The rule's MCP servers for `.mcp.json` (tokens stay out of it) and their tokens for the agent's environment. */
+  #mcpOf(rule: SpawnRule): {
+    servers: Record<string, { url: string; token?: string; declare?: boolean }>;
+    env: Record<string, string>;
+  } {
     const src = this.#o.secrets ?? realSecretSource(process.env);
-    return Object.fromEntries(
+    const env: Record<string, string> = {};
+    const servers = Object.fromEntries(
       Object.entries(rule.mcp).map(([k, v]) => {
-        if (!v.token) return [k, { url: v.url }];
-        const r = lookup([v.token], src);
-        if (!r.ok) throw new Error(`mcp ${k} token: ${r.reason}`);
-        return [k, { url: v.url, token: r.value }];
+        if (v.token) {
+          const r = lookup([v.token], src);
+          if (!r.ok) throw new Error(`mcp ${k} token: ${r.reason}`);
+          env[mcpTokenVar(k)] = r.value;
+        }
+        return [k, { url: v.url, ...(v.token ? { token: "env" } : {}), ...(v.declare ? { declare: true } : {}) }];
       }),
     );
+    return { servers, env };
+  }
+
+  /**
+   * A new herdr tab in the rule's workspace with the agent started in it (its directory prepared,
+   * hooks run, MCP servers written); `resume`: the harness's own session id to carry on (Claude
+   * Code `--resume`). Throws with what went wrong.
+   */
+  async #openAgent(
+    rule: SpawnRule,
+    item: InboundItem,
+    id: string,
+    resume?: string,
+  ): Promise<{ paneId: string; terminalId: string; tabId: string; label: string }> {
+    const dir = prepareDir(rule, id);
+    const mcp = this.#mcpOf(rule);
+    const env = { ...this.#envOf(rule), ...mcp.env, HERDR_SPAWN_ID: id };
+    writeMcp(dir, mcp.servers);
+    for (const [i, hook] of rule.before.entries()) {
+      const r = await (this.#o.runHook ?? runHook)(hook, {
+        cwd: dir,
+        env: { ...env, ...hookEnv(rule, item, dir, id) },
+      });
+      if (r.code === 0) continue;
+      const why = `hook ${i + 1} (${basename(hook.run[0] ?? "")}) ${r.code === null ? "did not finish" : `exited ${r.code}`}`;
+      this.#log(`spawn ${rule.id}: ${why}: ${oneLine(r.output).slice(-300)}`);
+      if (hook.required) throw new Error(`${why}: ${oneLine(r.output).slice(-200)}`);
+    }
+    const h = this.#o.herdr;
+    let label = `${rule.id}-${id.slice(0, 4)}`;
+    const ws = (await listWorkspaces(h)).find((w) => w.label === rule.workspace);
+    const workspaceId =
+      ws?.workspace_id ?? (await createWorkspace(h, { label: rule.workspace, cwd: dir })).workspace.workspace_id;
+    // The workspace's own first tab has no environment of its own: a tab in it does.
+    const opened = await createTab(h, { workspaceId, label, cwd: dir, env });
+    const paneId = opened.root_pane.pane_id;
+    label = opened.tab.label || label;
+    await startAgent(h, {
+      name: `${rule.id}-${id}${resume ? `-r${newId().slice(0, 4)}` : ""}`,
+      kind: rule.kind,
+      paneId,
+      args: [...rule.args, ...(resume ? ["--resume", resume] : [])],
+      onDialog: startupAnswer,
+      ...(this.#o.sleep ? { sleep: this.#o.sleep } : {}),
+    });
+    const a = (await listAgents(h)).find((x) => x.pane_id === paneId);
+    return { paneId, terminalId: a?.terminal_id ?? opened.root_pane.terminal_id, tabId: opened.tab.tab_id, label };
   }
 
   #envOf(rule: SpawnRule): Record<string, string> {
@@ -959,49 +1093,14 @@ export class Bridge {
     let paneId: string;
     let terminalId: string;
     let tabId: string | undefined;
-    let label = `${rule.id}-${id.slice(0, 4)}`;
+    let label: string;
     try {
-      const dir = prepareDir(rule, id);
-      const env = this.#envOf(rule);
-      writeMcp(dir, this.#mcpOf(rule));
-      for (const [i, hook] of rule.before.entries()) {
-        const r = await (this.#o.runHook ?? runHook)(hook, {
-          cwd: dir,
-          env: { ...env, ...hookEnv(rule, item, dir, id) },
-        });
-        if (r.code === 0) continue;
-        const why = `hook ${i + 1} (${basename(hook.run[0] ?? "")}) ${r.code === null ? "did not finish" : `exited ${r.code}`}`;
-        this.#log(`spawn ${rule.id}: ${why}: ${oneLine(r.output).slice(-300)}`);
-        if (hook.required) throw new Error(`${why}: ${oneLine(r.output).slice(-200)}`);
-      }
-      const h = this.#o.herdr;
-      const ws = (await listWorkspaces(h)).find((w) => w.label === rule.workspace);
-      const opened = ws
-        ? await createTab(h, { workspaceId: ws.workspace_id, label, cwd: dir, env })
-        : await (async () => {
-            // The workspace's own first tab has no environment of its own: a tab in it does.
-            const w = await createWorkspace(h, { label: rule.workspace, cwd: dir });
-            return await createTab(h, {
-              workspaceId: w.workspace.workspace_id,
-              label,
-              cwd: dir,
-              env: this.#envOf(rule),
-            });
-          })();
-      paneId = opened.root_pane.pane_id;
-      tabId = opened.tab.tab_id;
-      label = opened.tab.label || label;
-      await startAgent(h, {
-        name: `${rule.id}-${id}`,
-        kind: rule.kind,
+      ({ paneId, terminalId, tabId, label } = await this.#openAgent(rule, item, id));
+      await promptAgent(
+        this.#o.herdr,
         paneId,
-        args: rule.args,
-        onDialog: startupAnswer,
-        ...(this.#o.sleep ? { sleep: this.#o.sleep } : {}),
-      });
-      const a = (await listAgents(h)).find((x) => x.pane_id === paneId);
-      terminalId = a?.terminal_id ?? opened.root_pane.terminal_id;
-      await promptAgent(h, paneId, firstPrompt(rule, item, now, this.#blobDir(), await this.#historyOf(item)));
+        firstPrompt(rule, item, now, this.#blobDir(), await this.#historyOf(item)),
+      );
     } catch (e) {
       const why = e instanceof HerdrError ? `${e.code}: ${e.message}` : (e as Error).message;
       this.#log(`spawn ${rule.id} failed: ${why}`);
@@ -1132,6 +1231,11 @@ export class Bridge {
         sp.marked = [];
         continue;
       }
+      // The harness's own session, to resume it should its pane go (a wake later).
+      if (a.agent_session?.value && sp.session !== a.agent_session.value) {
+        sp.session = a.agent_session.value;
+        this.store.save();
+      }
       if (sp.turnAt === null) continue;
       const status = a.agent_status;
       if (status === "working" || status === "blocked") sp.sawWork = true;
@@ -1251,6 +1355,8 @@ export class Bridge {
 
   async #handle(item: InboundItem): Promise<void> {
     const env = item.envelope;
+    const wake = wakeOf(item);
+    if (wake) return this.#onWake(item, wake);
     const rule = ruleFor(this.#c.spawn, item);
     if (rule) return this.#onSpawnChannel(rule, item);
     if (env.channel !== CHANNEL || env.account !== this.#c.account) return;
