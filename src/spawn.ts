@@ -123,11 +123,12 @@ export function laterPrompt(item: InboundItem): string {
 }
 
 /**
- * The agent's own directory: `cwd/<id>`, with the rule's skills linked into `.claude/skills` and
- * `.agents/skills` (so Claude Code and Codex both find them). Links that are there already stay.
+ * The agent's directory: `cwd/<id>` (or `cwd` itself when agents share it), with the rule's skills
+ * linked into `.claude/skills` and `.agents/skills` (so Claude Code and Codex both find them).
+ * Links that are there already stay.
  */
 export function prepareDir(rule: SpawnRule, id: string): string {
-  const dir = join(rule.cwd, id);
+  const dir = rule.dirPerAgent ? join(rule.cwd, id) : rule.cwd;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   for (const sub of [".claude/skills", ".agents/skills"]) {
     const into = join(dir, sub);
