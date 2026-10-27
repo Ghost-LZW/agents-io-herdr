@@ -35,6 +35,8 @@ export interface Spawned {
   turnAt: number | null;
   /** herdr saw the agent work (or ask) since `turnAt`. */
   sawWork: boolean;
+  /** The owner's messages this turn answers (marked working; done when the answer goes out). */
+  marked?: { route: ReplyRoute; messageId: string }[];
   startedAt: number;
   lastAt: number;
   closedAt: number | null;
@@ -180,4 +182,27 @@ export function triggered(rule: SpawnRule, item: InboundItem): { start: boolean;
     i === first ? { type: "text" as const, text: words.slice(t.length).trimStart() } : c,
   );
   return { start: true, item: { ...item, input: { ...item.input, content }, envelope: { ...env, content } } };
+}
+
+/**
+ * A harness's own question at startup that starting it already answers (the owner configured the
+ * rule): trusting the working directory (Claude Code, Codex), accepting bypass mode (Claude
+ * Code). The keys that pick the yes, or null for anything else (that one stays for a person).
+ */
+export function startupAnswer(screen: string): string[] | null {
+  const known = [
+    /trust this folder|trust the (?:contents|files) of this (?:folder|directory)|do you trust/i,
+    /bypass permissions mode/i,
+  ];
+  if (!known.some((re) => re.test(screen))) return null;
+  const lines = screen.split("\n");
+  const option = (l: string) => /^\s*(?:[❯›>]\s*)?(?:\d+[.)]\s*)?(?:Yes|No)\b/i.test(l);
+  const yes = lines.findIndex((l) => option(l) && /^\s*(?:[❯›>]\s*)?(?:\d+[.)]\s*)?Yes\b/i.test(l));
+  if (yes < 0) return null;
+  const num = /^\s*(?:[❯›>]\s*)?(\d+)[.)]/.exec(lines[yes] ?? "")?.[1];
+  if (num) return [num];
+  const at = lines.findIndex((l) => option(l) && /^\s*[❯›>]/.test(l));
+  if (at < 0) return null;
+  const moves = yes - at;
+  return [...Array(Math.abs(moves)).fill(moves > 0 ? "down" : "up"), "enter"];
 }

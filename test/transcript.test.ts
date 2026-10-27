@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { strings } from "../src/i18n.ts";
 import { progressOf } from "../src/live.ts";
 import { noticeMessages, pages, processPages } from "../src/notice.ts";
+import { startupAnswer } from "../src/spawn.ts";
 import { claudeTurn, codexTurn, subjectOf, transcriptSource } from "../src/transcript.ts";
 import { tempDir } from "./fakes.ts";
 import { agent } from "./fixtures.ts";
@@ -246,5 +247,31 @@ describe("progressOf", () => {
       { turnId: "x", status: "running", startedAt: 1 },
     );
     expect(JSON.stringify(p)).not.toContain("abcdefghijklmnop1234");
+  });
+});
+
+describe("startupAnswer", () => {
+  const trust = [
+    " Accessing workspace:",
+    " /tmp/x",
+    " Quick safety check: Is this a project you created or one you trust?",
+    " ❯ No, exit",
+    "   Yes, I trust this folder",
+    " Enter to confirm · Esc to cancel",
+  ].join("\n");
+
+  it("answers a trust question by moving to its yes", () => {
+    expect(startupAnswer(trust)).toEqual(["down", "enter"]);
+    expect(startupAnswer(trust.replace("❯ No", "  No").replace("  Yes", "❯ Yes"))).toEqual(["enter"]);
+  });
+
+  it("picks a numbered yes by its number, and the bypass mode question", () => {
+    const bypass = "WARNING: Claude Code running in Bypass Permissions mode\n❯ 1. No, exit\n  2. Yes, I accept";
+    expect(startupAnswer(bypass)).toEqual(["2"]);
+  });
+
+  it("leaves any other dialog alone", () => {
+    expect(startupAnswer("Do you want to proceed?\n❯ 1. Yes\n  2. No")).toBeNull();
+    expect(startupAnswer("Quick safety check: do you trust this folder?\n(no options)")).toBeNull();
   });
 });

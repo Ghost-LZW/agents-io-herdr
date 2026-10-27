@@ -82,6 +82,7 @@ import {
   type Spawned,
   spawnedFor,
   spawnedRoute,
+  startupAnswer,
   topicOf,
   triggered,
 } from "./spawn.ts";
@@ -760,12 +761,16 @@ export class Bridge {
     const st = this.store.state;
     // The trigger starts a new agent (also in a topic that has one: the owner asked for another).
     const t = triggered(rule, item);
-    if (t.start) return this.#spawn(rule, t.item);
+    if (t.start) {
+      await this.#mark(item, "working");
+      return this.#spawn(rule, t.item);
+    }
     const target =
       spawnedFor(st.spawned, item, repliedTo(item)) ?? (env.conversation.kind === "dm" ? this.#latestIn(item) : null);
     if (!target) return;
     const text = laterPrompt(item);
     if (!text) return;
+    await this.#mark(item, "working");
     const s = this.#s;
     const pane = this.#spawnedPane(target);
     const say = async (t: string) => {
@@ -786,8 +791,39 @@ export class Bridge {
     }
     target.turnAt ??= this.#now();
     target.lastAt = this.#now();
+    if (!keyed) this.#markedBy(target, item);
     this.store.save();
     this.#log(`spawn ${target.id}: ${keyed ? "key" : `prompt (${text.length} chars)`}`);
+  }
+
+  /**
+   * The channel's mark on the owner's message (a reaction where the channel has one): `working`
+   * when taken, `done` / `failed` / `none` later. Cosmetic: a daemon without `message.ack` or a
+   * channel without marks changes nothing.
+   */
+  async #mark(item: InboundItem, state: "working" | "done" | "failed" | "none"): Promise<void> {
+    const env = item.envelope;
+    if (env.replyRoute) await this.#markMessage(env.replyRoute, env.id, state);
+  }
+
+  async #markMessage(
+    route: ReplyRoute,
+    messageId: string,
+    state: "working" | "done" | "failed" | "none",
+  ): Promise<void> {
+    if (!this.#o.aio.hello?.features?.includes("message.ack")) return;
+    try {
+      await this.#o.aio.request("message.ack", { route, messageId, state }, 15_000);
+    } catch (e) {
+      this.#log(`mark ${state} on ${route.channel} message: ${(e as Error).message}`);
+    }
+  }
+
+  /** The owner's message joins the turn under way (its mark turns done with the answer). */
+  #markedBy(sp: Spawned, item: InboundItem): void {
+    const route = item.envelope.replyRoute;
+    if (!route) return;
+    sp.marked = [...(sp.marked ?? []), { route, messageId: item.envelope.id }].slice(-20);
   }
 
   /** In a direct conversation without topics: the newest agent running there. */
@@ -871,6 +907,7 @@ export class Bridge {
         kind: rule.kind,
         paneId,
         args: rule.args,
+        onDialog: startupAnswer,
         ...(this.#o.sleep ? { sleep: this.#o.sleep } : {}),
       });
       const a = (await listAgents(h)).find((x) => x.pane_id === paneId);
@@ -879,6 +916,7 @@ export class Bridge {
     } catch (e) {
       const why = e instanceof HerdrError ? `${e.code}: ${e.message}` : (e as Error).message;
       this.#log(`spawn ${rule.id} failed: ${why}`);
+      await this.#mark(item, "failed");
       await this.#deliver(`${op}:failed`, route, { text: this.#s.spawnFailed(why) }).catch(() => undefined);
       return;
     }
@@ -897,6 +935,7 @@ export class Bridge {
       progressSeq: 0,
       turnAt: now,
       sawWork: false,
+      ...(env.replyRoute ? { marked: [{ route: env.replyRoute, messageId: env.id }] } : {}),
       startedAt: now,
       lastAt: now,
       closedAt: null,
@@ -994,6 +1033,8 @@ export class Bridge {
         closed = true;
         this.#log(`spawn ${sp.id}: pane gone`);
         if (sp.turnAt !== null) await this.#spawnProgress(sp, this.#s.spawnGone, true);
+        for (const m of sp.marked ?? []) await this.#markMessage(m.route, m.messageId, "failed");
+        sp.marked = [];
         continue;
       }
       if (sp.turnAt === null) continue;
@@ -1028,6 +1069,8 @@ export class Bridge {
       for (const [i, p] of pages.slice(1).entries()) {
         await this.#spawnSay(sp, { text: p }, `herdr:sp:${sp.id}:t${sp.turnAt}:more${i + 1}`);
       }
+      for (const m of sp.marked ?? []) await this.#markMessage(m.route, m.messageId, "done");
+      sp.marked = [];
       sp.turnAt = null;
       sp.sawWork = false;
       sp.progressId = null;
