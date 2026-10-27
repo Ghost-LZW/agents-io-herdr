@@ -68,6 +68,7 @@ bridge 只通过 agents-io 的宿主协议（unix socket 上的 JSONL）和自�
 `spawn` 规则让主人在另一个通道上写触发词时，在 herdr 里新开一个 agent。比如把个人账号作为 agents-io 通道插件挂进守护进程（`channels`，它的 token 按名字写在 `secrets`）。通道要把触发消息标成“对本部署说的”（admission `dispatch`）。每次触发，桥接会：
 
 - 在 herdr 的 `workspace` 工作区（默认 `ai`）开一个 tab，目录是 `cwd` 下新建的一个，规则的 `skills` 链接进 `.claude/skills` 和 `.agents/skills`，环境变量用 `env`（值可写 `env:…`、`keychain:…`）；
+- 在那里依次运行规则的 `before` 钩子（一行命令或一个列表；`timeoutSec` 默认 60；`required: true` 时失败就不开 agent，否则只记日志），环境变量是规则的 `env`，外加 `HERDR_SPAWN_RULE`、`_ID`、`_DIR`、`_CHANNEL`、`_ACCOUNT`、`_CONVERSATION`、`_TOPIC`、`_MESSAGE`；
 - 启动 agent（`kind`、`args`），告诉它规则的 `preamble`、在哪被叫的（会话、话题、消息 id）、引用的消息和主人的话；
 - 在那里回答：先发一条进度消息，守护进程能改已发消息（`deliver.update`）时边做边改，最后改成回答；
 - 主人之后在同一个话题里（或回复 agent 的消息）说的话，交给同一个 agent；它在等选择时，回一个数字或 `esc` 就是选。
@@ -184,7 +185,7 @@ agents-io-herdr setup --wait
 | `notify.liveEverySec` | 5 | 实时卡片多久按会话记录更新一次（至少 2） |
 | `channels` | — | 给项目守护进程加的 agents-io 通道条目，原样写入 |
 | `secrets` | — | `名字: "keychain:…" \| "env:…"`：放进守护进程的环境变量，给 `channels` 里的 `env:名字` 用 |
-| `spawn` | — | 从消息启动 agent 的规则（见上）：`channel`、`account`、`owner` 必填；`kind`（`claude`）、`args`、`cwd`、`env`、`skills`、`preamble`、`workspace`（`ai`）、`id`（`ai`） |
+| `spawn` | — | 从消息启动 agent 的规则（见上）：`channel`、`account`、`owner` 必填；`kind`（`claude`）、`args`、`cwd`、`env`、`skills`、`preamble`、`before`、`trigger`、`dirPerAgent`、`workspace`（`ai`）、`id`（`ai`） |
 | `workbench.create` | true | 绑定主人时自动建工作台群 |
 | `workbench.name` | `<machine> 终端` / `<machine> terminal` | 群名 |
 | `dataDir` | `~/.local/share/agents-io-herdr`（或 `$AGENTS_IO_HERDR_DATA`） | 状态和守护进程的数据 |

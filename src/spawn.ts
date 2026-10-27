@@ -8,9 +8,11 @@
  * Nothing here knows the channel: the rule (config `spawn`) names it, its owner, the agent kind,
  * the skills to link into the agent's directory and what to tell the agent first.
  */
+
+import { spawn as run } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, symlinkSync } from "node:fs";
 import { basename, join } from "node:path";
-import type { SpawnRule } from "./config.ts";
+import type { SpawnHook, SpawnRule } from "./config.ts";
 import type { ContentBlock, InboundItem, ReplyRoute } from "./protocol.ts";
 
 /** One spawned agent: where it came from and how to answer there. */
@@ -205,4 +207,53 @@ export function startupAnswer(screen: string): string[] | null {
   if (at < 0) return null;
   const moves = yes - at;
   return [...Array(Math.abs(moves)).fill(moves > 0 ? "down" : "up"), "enter"];
+}
+
+/** What a hook did: its exit code (null: killed at the timeout, or not started) and the end of its output. */
+export interface HookResult {
+  code: number | null;
+  output: string;
+}
+
+export type HookRunner = (h: SpawnHook, o: { cwd: string; env: Record<string, string> }) => Promise<HookResult>;
+
+/** Runs a hook as a child process (never blocking the bridge), its output kept to the last 2000 characters. */
+export const runHook: HookRunner = (h, o) =>
+  new Promise((resolve) => {
+    let output = "";
+    const keep = (b: Buffer) => {
+      output = (output + b.toString("utf8")).slice(-2000);
+    };
+    const [cmd, ...args] = h.run;
+    const child = run(cmd as string, args, {
+      cwd: o.cwd,
+      env: { ...process.env, ...o.env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const timer = setTimeout(() => child.kill("SIGTERM"), h.timeoutMs);
+    child.stdout.on("data", keep);
+    child.stderr.on("data", keep);
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      resolve({ code: null, output: e.message });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code, output });
+    });
+  });
+
+/** The environment a hook sees about the agent it runs for (besides the rule's own `env`). */
+export function hookEnv(rule: SpawnRule, item: InboundItem, dir: string, id: string): Record<string, string> {
+  const env = item.envelope;
+  return {
+    HERDR_SPAWN_RULE: rule.id,
+    HERDR_SPAWN_ID: id,
+    HERDR_SPAWN_DIR: dir,
+    HERDR_SPAWN_CHANNEL: env.channel,
+    HERDR_SPAWN_ACCOUNT: env.account,
+    HERDR_SPAWN_CONVERSATION: env.conversation.id,
+    HERDR_SPAWN_TOPIC: env.conversation.threadId ?? "",
+    HERDR_SPAWN_MESSAGE: env.id,
+  };
 }

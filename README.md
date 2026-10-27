@@ -68,6 +68,7 @@ This comes from the transcript the agent writes itself (Claude Code: `~/.claude/
 `spawn` rules start a new agent in herdr when the owner writes a trigger on another channel, for example a personal account loaded into the daemon as an agents-io channel plugin (`channels`, its tokens by name in `secrets`). The channel must mark the trigger as addressed to the deployment (admission `dispatch`). For each trigger the bridge:
 
 - opens a tab in the herdr workspace `workspace` (default `ai`), in a fresh directory under `cwd` with the rule's `skills` linked into `.claude/skills` and `.agents/skills`, and its `env` (values may be `env:…` or `keychain:…`);
+- runs the rule's `before` hooks there, in order (a command line or a list; `timeoutSec`, default 60; `required: true` stops the start when it fails, otherwise a failure is only logged), with the rule's `env` and `HERDR_SPAWN_RULE`, `_ID`, `_DIR`, `_CHANNEL`, `_ACCOUNT`, `_CONVERSATION`, `_TOPIC`, `_MESSAGE`;
 - starts the agent (`kind`, `args`) and gives it the rule's `preamble`, where it was called (conversation, topic, message ids), the quoted message and the owner's words;
 - answers in that place: a progress message, edited while it works where the daemon can (`deliver.update`), settled with the answer;
 - types what the owner says next in the same topic (or in reply to one of the agent's messages) into the same agent; while it waits on a dialog, a bare number or `esc` picks.
@@ -184,7 +185,7 @@ prints a one-time code (valid 15 minutes, 5 tries). Send it to the bot in a dire
 | `notify.liveEverySec` | 5 | How often the live card follows the transcript (at least 2) |
 | `channels` | — | More agents-io channel entries for the project's daemon, as written |
 | `secrets` | — | `NAME: "keychain:…" \| "env:…"`: set in the daemon's environment, for the `env:NAME` values of `channels` |
-| `spawn` | — | Rules that start an agent from a message (above): `channel`, `account`, `owner` (required); `kind` (`claude`), `args`, `cwd`, `env`, `skills`, `preamble`, `workspace` (`ai`), `id` (`ai`) |
+| `spawn` | — | Rules that start an agent from a message (above): `channel`, `account`, `owner` (required); `kind` (`claude`), `args`, `cwd`, `env`, `skills`, `preamble`, `before`, `trigger`, `dirPerAgent`, `workspace` (`ai`), `id` (`ai`) |
 | `workbench.create` | true | Create the workbench group at setup |
 | `workbench.name` | `<machine> terminal` / `<machine> 终端` | Its name |
 | `dataDir` | `~/.local/share/agents-io-herdr` (or `$AGENTS_IO_HERDR_DATA`) | State and the daemon's data |

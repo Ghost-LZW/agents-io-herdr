@@ -45,6 +45,15 @@ export interface Config {
   paths: Paths;
 }
 
+/** A command run before an agent starts. */
+export interface SpawnHook {
+  /** The program and its arguments (no shell), or one string run by `/bin/sh -c`. */
+  run: string[];
+  timeoutMs: number;
+  /** A failure (non-zero exit, timeout) stops the start; otherwise it is logged and the start goes on. */
+  required: boolean;
+}
+
 /** Which owner messages start an agent, and with what. */
 export interface SpawnRule {
   /** The rule's name, in thread ids and logs. */
@@ -70,6 +79,8 @@ export interface SpawnRule {
   preamble: string;
   /** The herdr workspace (by label) the agents' tabs go into; made when missing. */
   workspace: string;
+  /** Commands run before each agent starts (in its directory, with its environment), in order. */
+  before: SpawnHook[];
   /**
    * In a direct conversation the channel may address every message to us (a self-chat): there only
    * messages starting with this word start an agent (it is taken off); null: every addressed one does.
@@ -171,6 +182,19 @@ function refs(v: unknown, where: string, dflt: SecretRef[], literalOk: boolean):
 
 const ACCOUNT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
+function spawnHook(v: unknown, where: string): SpawnHook {
+  const h = typeof v === "string" || Array.isArray(v) ? { run: v } : obj(v, where);
+  const run = typeof h.run === "string" ? ["/bin/sh", "-c", h.run] : h.run;
+  if (!Array.isArray(run) || !run.length || run.some((x) => typeof x !== "string" || !x)) {
+    throw new ConfigError(`${where}.run must be a command line (a string) or a list of strings`);
+  }
+  return {
+    run: run as string[],
+    timeoutMs: seconds(h.timeoutSec, `${where}.timeoutSec`, 60_000),
+    required: bool(h.required, `${where}.required`, false),
+  };
+}
+
 function spawnRule(r: Raw, where: string, path: (p: string) => string): SpawnRule {
   const need = (k: string) => {
     const v = str(r[k], `${where}.${k}`);
@@ -205,6 +229,9 @@ function spawnRule(r: Raw, where: string, path: (p: string) => string): SpawnRul
     preamble: str(r.preamble, `${where}.preamble`) ?? "",
     workspace: str(r.workspace, `${where}.workspace`) ?? "ai",
     trigger: str(r.trigger, `${where}.trigger`) || null,
+    before: (Array.isArray(r.before) ? r.before : r.before === undefined ? [] : [r.before]).map((h, i) =>
+      spawnHook(h, `${where}.before[${i}]`),
+    ),
   };
 }
 
