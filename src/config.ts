@@ -40,6 +40,8 @@ export interface Config {
   extraChannels: Record<string, unknown>[];
   /** `NAME` → where its value comes from (`env:…`, `keychain:…`): set in the daemon's environment only. */
   secrets: Record<string, SecretRef[]>;
+  /** The daemon's external MCP endpoint (agents-io `externalMcp`), as written; null: off. */
+  externalMcp: Record<string, unknown> | null;
   /** Messages that start a new agent in herdr (the owner's trigger on another channel); empty: none. */
   spawn: SpawnRule[];
   paths: Paths;
@@ -75,6 +77,11 @@ export interface SpawnRule {
   env: Record<string, SecretRef>;
   /** Skill directories linked into each agent's `.claude/skills/` (and `.agents/skills/`). */
   skills: string[];
+  /**
+   * MCP servers written into the agent's `.mcp.json` (Claude Code's project servers): name → URL
+   * and a bearer token reference (`env:…`, `keychain:…`, looked up when the agent starts).
+   */
+  mcp: Record<string, { url: string; token?: SecretRef }>;
   /** Said to the agent before the owner's words (the place, how to read it, how to answer). */
   preamble: string;
   /** The herdr workspace (by label) the agents' tabs go into; made when missing. */
@@ -226,6 +233,17 @@ function spawnRule(r: Raw, where: string, path: (p: string) => string): SpawnRul
     dirPerAgent: bool(r.dirPerAgent, `${where}.dirPerAgent`, true),
     env,
     skills: list("skills").map(path),
+    mcp: Object.fromEntries(
+      Object.entries(obj(r.mcp, `${where}.mcp`)).map(([k, v]) => {
+        const e = obj(v, `${where}.mcp.${k}`);
+        const url = str(e.url, `${where}.mcp.${k}.url`);
+        if (!url || !/^https?:\/\//.test(url)) throw new ConfigError(`${where}.mcp.${k}.url must be an http(s) URL`);
+        const token = str(e.token, `${where}.mcp.${k}.token`);
+        if (token && !/^(env|keychain):./.test(token))
+          throw new ConfigError(`${where}.mcp.${k}.token must be "env:NAME" or "keychain:SERVICE"`);
+        return [k, { url, ...(token ? { token } : {}) }];
+      }),
+    ),
     preamble: str(r.preamble, `${where}.preamble`) ?? "",
     workspace: str(r.workspace, `${where}.workspace`) ?? "ai",
     trigger: str(r.trigger, `${where}.trigger`) || null,
@@ -344,6 +362,7 @@ export function resolveConfig(
     rules,
     extraChannels,
     secrets,
+    externalMcp: raw.externalMcp === undefined ? null : obj(raw.externalMcp, "externalMcp"),
     spawn,
     paths: {
       configFile: file,

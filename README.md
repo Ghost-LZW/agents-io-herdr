@@ -185,7 +185,8 @@ prints a one-time code (valid 15 minutes, 5 tries). Send it to the bot in a dire
 | `notify.liveEverySec` | 5 | How often the live card follows the transcript (at least 2) |
 | `channels` | — | More agents-io channel entries for the project's daemon, as written |
 | `secrets` | — | `NAME: "keychain:…" \| "env:…"`: set in the daemon's environment, for the `env:NAME` values of `channels` |
-| `spawn` | — | Rules that start an agent from a message (above): `channel`, `account`, `owner` (required); `kind` (`claude`), `args`, `cwd`, `env`, `skills`, `preamble`, `before`, `trigger`, `dirPerAgent`, `workspace` (`ai`), `id` (`ai`) |
+| `externalMcp` | — | The daemon's external MCP endpoint (agents-io `externalMcp`: `listen`, `clients` with `tokenFile` and `scopes`), as written |
+| `spawn` | — | Rules that start an agent from a message (above): `channel`, `account`, `owner` (required); `kind` (`claude`), `args`, `cwd`, `env`, `skills`, `preamble`, `before`, `mcp` (name → `{ url, token: "env:…" | "keychain:…" }`, written to the agent's `.mcp.json`), `trigger`, `dirPerAgent`, `workspace` (`ai`), `id` (`ai`) |
 | `workbench.create` | true | Create the workbench group at setup |
 | `workbench.name` | `<machine> terminal` / `<machine> 终端` | Its name |
 | `dataDir` | `~/.local/share/agents-io-herdr` (or `$AGENTS_IO_HERDR_DATA`) | State and the daemon's data |

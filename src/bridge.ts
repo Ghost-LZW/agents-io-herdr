@@ -92,6 +92,7 @@ import {
   startupAnswer,
   topicOf,
   triggered,
+  writeMcp,
 } from "./spawn.ts";
 import {
   clearSetup,
@@ -915,6 +916,19 @@ export class Bridge {
     }
   }
 
+  /** The rule's MCP servers with their tokens looked up (`env:…`, `keychain:…`). */
+  #mcpOf(rule: SpawnRule): Record<string, { url: string; token?: string }> {
+    const src = this.#o.secrets ?? realSecretSource(process.env);
+    return Object.fromEntries(
+      Object.entries(rule.mcp).map(([k, v]) => {
+        if (!v.token) return [k, { url: v.url }];
+        const r = lookup([v.token], src);
+        if (!r.ok) throw new Error(`mcp ${k} token: ${r.reason}`);
+        return [k, { url: v.url, token: r.value }];
+      }),
+    );
+  }
+
   #envOf(rule: SpawnRule): Record<string, string> {
     const src = this.#o.secrets ?? realSecretSource(process.env);
     const out: Record<string, string> = {};
@@ -949,6 +963,7 @@ export class Bridge {
     try {
       const dir = prepareDir(rule, id);
       const env = this.#envOf(rule);
+      writeMcp(dir, this.#mcpOf(rule));
       for (const [i, hook] of rule.before.entries()) {
         const r = await (this.#o.runHook ?? runHook)(hook, {
           cwd: dir,
