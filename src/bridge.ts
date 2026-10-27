@@ -13,7 +13,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import type { Config, SpawnRule } from "./config.ts";
 import { type FeishuApi, FeishuError, isScopeError } from "./feishu.ts";
 import {
@@ -777,7 +777,7 @@ export class Bridge {
     const target =
       spawnedFor(st.spawned, item, repliedTo(item)) ?? (env.conversation.kind === "dm" ? this.#latestIn(item) : null);
     if (!target) return;
-    const text = laterPrompt(item);
+    const text = laterPrompt(item, this.#blobDir());
     if (!text) return;
     if (isClose(textOf(env.content))) return this.#closeSpawned(target, item);
     await this.#mark(item, "working");
@@ -834,6 +834,11 @@ export class Bridge {
     const route = item.envelope.replyRoute;
     if (!route) return;
     sp.marked = [...(sp.marked ?? []), { route, messageId: item.envelope.id }].slice(-20);
+  }
+
+  /** The daemon's blob store, where channel images and files are kept (agents open them from there). */
+  #blobDir(): string {
+    return join(this.#c.paths.aioDataDir, "blobs");
   }
 
   /** In a direct conversation without topics: the newest agent running there. */
@@ -958,7 +963,7 @@ export class Bridge {
       });
       const a = (await listAgents(h)).find((x) => x.pane_id === paneId);
       terminalId = a?.terminal_id ?? opened.root_pane.terminal_id;
-      await promptAgent(h, paneId, firstPrompt(rule, item, now));
+      await promptAgent(h, paneId, firstPrompt(rule, item, now, this.#blobDir()));
     } catch (e) {
       const why = e instanceof HerdrError ? `${e.code}: ${e.message}` : (e as Error).message;
       this.#log(`spawn ${rule.id} failed: ${why}`);

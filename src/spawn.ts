@@ -10,7 +10,7 @@
  */
 
 import { spawn as run } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, symlinkSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { SpawnHook, SpawnRule } from "./config.ts";
 import type { ContentBlock, InboundItem, ReplyRoute } from "./protocol.ts";
@@ -52,6 +52,35 @@ const text = (content: ContentBlock[]) =>
     .map((c) => c.text)
     .join("\n")
     .trim();
+
+/**
+ * Images and files of a message as paths the agent can open (its harness reads images from a path):
+ * the daemon's blob store keeps each as `<dir>/<first two hex>/<hex>.<ext>`. Platform refs, or
+ * blobs not there, are named only.
+ */
+export function attachments(content: ContentBlock[], blobDir: string | null): string[] {
+  const out: string[] = [];
+  for (const c of content) {
+    if (c.type !== "image" && c.type !== "file" && c.type !== "audio") continue;
+    const hex = /^sha256:([0-9a-f]{64})$/.exec(c.ref)?.[1];
+    const file = hex && blobDir ? blobFile(blobDir, hex) : null;
+    const name = c.name ? ` "${c.name}"` : "";
+    out.push(
+      file ? `${c.type}${name} (${c.mime}): ${file}` : `${c.type}${name} (${c.mime}): not available here (${c.ref})`,
+    );
+  }
+  return out;
+}
+
+function blobFile(dir: string, hex: string): string | null {
+  const shard = join(dir, hex.slice(0, 2));
+  try {
+    const f = readdirSync(shard).find((n) => n.startsWith(`${hex}.`) && !n.endsWith(".json"));
+    return f ? join(shard, f) : null;
+  } catch {
+    return null;
+  }
+}
 
 const quotes = (content: ContentBlock[]) =>
   content.filter((c): c is Extract<ContentBlock, { type: "quote" }> => c.type === "quote");
@@ -97,7 +126,7 @@ export function spawnedFor(list: Spawned[], item: InboundItem, replied: string[]
 }
 
 /** The first prompt: the rule's preamble, where the owner is, what they quoted and said. */
-export function firstPrompt(rule: SpawnRule, item: InboundItem, now: number): string {
+export function firstPrompt(rule: SpawnRule, item: InboundItem, now: number, blobDir: string | null = null): string {
   const env = item.envelope;
   const ctx = item.input.channelContext ?? {};
   const where = [
@@ -116,16 +145,23 @@ export function firstPrompt(rule: SpawnRule, item: InboundItem, now: number): st
     `Where you were called:\n${where.map((l) => `- ${l}`).join("\n")}`,
     q.length ? `The message they quoted:\n${q.join("\n\n")}` : "",
     `What they asked:\n${text(env.content) || "(nothing more: read the place and work out what is wanted)"}`,
+    files(env.content, blobDir),
   ]
     .filter(Boolean)
     .join("\n\n");
 }
 
 /** A later message for a running agent: what was said, and what it quoted. */
-export function laterPrompt(item: InboundItem): string {
+export function laterPrompt(item: InboundItem, blobDir: string | null = null): string {
   const env = item.envelope;
   const q = quotes(env.content).map((x) => `> ${x.text.replace(/\n/g, "\n> ")}`);
-  return [q.join("\n"), text(env.content)].filter(Boolean).join("\n\n");
+  return [q.join("\n"), text(env.content), files(env.content, blobDir)].filter(Boolean).join("\n\n");
+}
+
+/** The message's images and files as a block the agent can act on (open the paths). */
+function files(content: ContentBlock[], blobDir: string | null): string {
+  const list = attachments(content, blobDir);
+  return list.length ? `Attached (open these files to see them):\n${list.map((l) => `- ${l}`).join("\n")}` : "";
 }
 
 /**
