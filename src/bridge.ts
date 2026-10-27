@@ -13,9 +13,11 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
-import type { Config } from "./config.ts";
+import type { Config, SpawnRule } from "./config.ts";
 import { type FeishuApi, FeishuError, isScopeError } from "./feishu.ts";
 import {
+  createTab,
+  createWorkspace,
   type Herdr,
   type HerdrAgent,
   HerdrError,
@@ -23,19 +25,23 @@ import {
   listAgents,
   listPanes,
   listTabs,
+  listWorkspaces,
   promptAgent,
   readAgent,
   readPane,
   runInPane,
   sendKeys,
   sendPaneKeys,
+  startAgent,
 } from "./herdr.ts";
 import { type Command, commandOf, type Strings, strings } from "./i18n.ts";
 import { progressOf } from "./live.ts";
 import {
   ACTION_PREFIX,
   agentName,
+  answerPages,
   buttons,
+  fence,
   KEY_ACTION,
   keyLabel,
   liveMessage,
@@ -67,6 +73,17 @@ import type {
 } from "./protocol.ts";
 import { redact } from "./redact.ts";
 import { type DialogOption, optionsOf, summaryOf, tailOf } from "./screen.ts";
+import { lookup, realSecretSource, type SecretSource } from "./secrets.ts";
+import {
+  firstPrompt,
+  laterPrompt,
+  prepareDir,
+  ruleFor,
+  type Spawned,
+  spawnedFor,
+  spawnedRoute,
+  topicOf,
+} from "./spawn.ts";
 import {
   clearSetup,
   hashCode,
@@ -110,6 +127,8 @@ export interface BridgeOptions {
   store: Store;
   /** Agents' own transcripts (the whole turn); none: notices show the screen only. */
   transcripts?: TranscriptSource;
+  /** Where `spawn` environment values (`env:…`, `keychain:…`) are looked up. */
+  secrets?: SecretSource;
   now?: () => number;
   idleMs?: () => number | null;
   log?: (msg: string) => void;
@@ -201,6 +220,10 @@ export class Bridge {
   #noReactions = false;
   /** Live cards: when each was last updated and what it showed (by turn id). */
   #liveShown = new Map<string, { at: number; json: string }>();
+  /** Spawned agents whose waiting dialog was put in their place already (until it closes). */
+  #asked = new Set<string>();
+  /** When each spawned agent's progress was last edited. */
+  #spawnShown = new Map<string, number>();
   /** Panes whose live card was settled lately, by pane key → chat: a done notice there points at it. */
   #liveSettled = new Map<string, { chatId: string; at: number }>();
 
@@ -279,6 +302,28 @@ export class Bridge {
         note: "the owner @-mentioning the bot in a group",
       });
     }
+    // Agents started from a message: the owner's trigger (the channel hints `dispatch`), and in a
+    // topic (or a group) where one of them runs, what the owner says next.
+    for (const r of this.#c.spawn) {
+      const m = { channel: r.channel, account: r.account, senders: [r.owner] };
+      b.push({
+        id: `herdr:spawn:${r.id}`,
+        match: { ...m, mentions: ["self"] },
+        on: "host",
+        note: `${r.id}: the trigger`,
+      });
+      const where = new Set(
+        this.store.state.spawned.filter((x) => x.rule === r.id && x.closedAt === null).map((x) => x.conversationId),
+      );
+      for (const conversation of [...where].sort()) {
+        b.push({
+          id: `herdr:spawn:${r.id}:${sha(conversation).slice(0, 8)}`,
+          match: { ...m, conversation },
+          on: "host",
+          note: `${r.id}: a running agent's chat`,
+        });
+      }
+    }
     const identities = owner
       ? [{ channel: CHANNEL, channelUserId: owner.id, principal: "owner", labels: ["owner"] }]
       : [];
@@ -323,9 +368,13 @@ export class Bridge {
         minuteOfDay: minuteOfDay(new Date(now), this.#c.timeZone),
       });
       await this.#closeGone(agents);
+      await this.#followSpawned(agents, now);
       await this.#live(agents, now);
       const paused = this.paused;
-      for (const n of notices) {
+      const spawnedPanes = new Set(
+        this.store.state.spawned.filter((x) => x.closedAt === null).map((x) => `${x.paneId}|${x.terminalId}`),
+      );
+      for (const n of notices.filter((x) => x.kind === "overnight" || !spawnedPanes.has(paneKey(x.agent)))) {
         this.#log(
           `${n.kind}${n.kind === "overnight" ? ` x${n.items.length}` : ` ${n.agent.pane_id}`}${paused ? " (paused: dropped)" : ""}`,
         );
@@ -542,9 +591,11 @@ export class Bridge {
     }
     if (this.paused || inQuiet(this.#c.rules, minuteOfDay(new Date(now), this.#c.timeZone))) return;
     const idleMs = this.#o.idleMs?.() ?? null;
+    const spawned = new Set(st.spawned.filter((x) => x.closedAt === null).map((x) => `${x.paneId}|${x.terminalId}`));
     for (const a of byKey.values()) {
       const v = views.get(paneKey(a));
       if (!v || v.workingSince === null || now - v.workingSince < cfg.afterMs) continue;
+      if (spawned.has(v.key)) continue;
       if (a.agent_status !== "working" && a.agent_status !== "blocked") continue;
       if (st.live.some((c) => c.paneKey === v.key)) continue;
       // Someone looking at the pane does not need it on the phone.
@@ -699,6 +750,269 @@ export class Bridge {
     this.#log(`live card for ${c.paneId} settled`);
   }
 
+  // ---- agents started from a message (config `spawn`) ----------------------------------------
+
+  async #onSpawnChannel(rule: SpawnRule, item: InboundItem): Promise<void> {
+    const env = item.envelope;
+    const st = this.store.state;
+    const target = spawnedFor(st.spawned, item, repliedTo(item));
+    // The trigger starts a new agent (also in a topic that has one: the owner asked for another).
+    if (env.admission === "dispatch" || (!target && env.admission !== "observe")) return this.#spawn(rule, item);
+    if (!target) return;
+    const text = laterPrompt(item);
+    if (!text) return;
+    const s = this.#s;
+    const pane = this.#spawnedPane(target);
+    const say = async (t: string) => {
+      await this.#spawnSay(target, { text: t }, `herdr:sp:${sha(item.channelRef).slice(0, 24)}`, env.id);
+    };
+    const a = await pane;
+    if (!a) return say(s.spawnGone);
+    // A waiting dialog: a number or esc picks; anything else is not typed into it.
+    const key = /^\s*([1-9]|esc)\s*$/i.exec(textOf(env.content))?.[1]?.toLowerCase();
+    const keyed = a.agent_status === "blocked" && key !== undefined;
+    try {
+      if (keyed) await sendKeys(this.#o.herdr, target.paneId, [key]);
+      else await promptAgent(this.#o.herdr, target.paneId, text);
+    } catch (e) {
+      const code = e instanceof HerdrError ? e.code : "error";
+      if (code === "agent_blocked") return this.#spawnAskChoice(target, env.id);
+      return say(s.failed(code));
+    }
+    target.turnAt ??= this.#now();
+    target.lastAt = this.#now();
+    this.store.save();
+    this.#log(`spawn ${target.id}: ${keyed ? "key" : `prompt (${text.length} chars)`}`);
+  }
+
+  /** The agent's pane, if it still runs the same program. */
+  async #spawnedPane(sp: Spawned): Promise<HerdrAgent | null> {
+    try {
+      const a = (await listAgents(this.#o.herdr)).find(
+        (x) => x.pane_id === sp.paneId && x.terminal_id === sp.terminalId,
+      );
+      return a ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  #envOf(rule: SpawnRule): Record<string, string> {
+    const src = this.#o.secrets ?? realSecretSource(process.env);
+    const out: Record<string, string> = {};
+    for (const [k, ref] of Object.entries(rule.env)) {
+      const r = lookup([ref], src);
+      if (!r.ok) throw new Error(`${k}: ${r.reason}`);
+      out[k] = r.value;
+    }
+    return out;
+  }
+
+  async #spawn(rule: SpawnRule, item: InboundItem): Promise<void> {
+    const env = item.envelope;
+    const now = this.#now();
+    const id = newId();
+    const op = `herdr:sp:${sha(item.channelRef).slice(0, 24)}`;
+    const route: ReplyRoute = {
+      channel: env.channel,
+      account: env.account,
+      conversationId: env.conversation.id,
+      ...(env.conversation.threadId ? { threadId: env.conversation.threadId } : {}),
+      replyToMessageId: env.id,
+    };
+    if (this.paused) {
+      await this.#deliver(`${op}:paused`, route, { text: this.#s.paused }).catch(() => undefined);
+      return;
+    }
+    let paneId: string;
+    let terminalId: string;
+    let label = `${rule.id}-${id.slice(0, 4)}`;
+    try {
+      const dir = prepareDir(rule, id);
+      const h = this.#o.herdr;
+      const ws = (await listWorkspaces(h)).find((w) => w.label === rule.workspace);
+      const opened = ws
+        ? await createTab(h, { workspaceId: ws.workspace_id, label, cwd: dir, env: this.#envOf(rule) })
+        : await (async () => {
+            // The workspace's own first tab has no environment of its own: a tab in it does.
+            const w = await createWorkspace(h, { label: rule.workspace, cwd: dir });
+            return await createTab(h, {
+              workspaceId: w.workspace.workspace_id,
+              label,
+              cwd: dir,
+              env: this.#envOf(rule),
+            });
+          })();
+      paneId = opened.root_pane.pane_id;
+      label = opened.tab.label || label;
+      await startAgent(h, { name: `${rule.id}-${id}`, kind: rule.kind, paneId, args: rule.args });
+      const a = (await listAgents(h)).find((x) => x.pane_id === paneId);
+      terminalId = a?.terminal_id ?? opened.root_pane.terminal_id;
+      await promptAgent(h, paneId, firstPrompt(rule, item, now));
+    } catch (e) {
+      const why = e instanceof HerdrError ? `${e.code}: ${e.message}` : (e as Error).message;
+      this.#log(`spawn ${rule.id} failed: ${why}`);
+      await this.#deliver(`${op}:failed`, route, { text: this.#s.spawnFailed(why) }).catch(() => undefined);
+      return;
+    }
+    const sp: Spawned = {
+      id,
+      rule: rule.id,
+      paneId,
+      terminalId,
+      channel: env.channel,
+      account: env.account,
+      conversationId: env.conversation.id,
+      topic: topicOf(item),
+      startMessageId: env.id,
+      sent: [],
+      progressId: null,
+      progressSeq: 0,
+      turnAt: now,
+      sawWork: false,
+      startedAt: now,
+      lastAt: now,
+      closedAt: null,
+    };
+    this.store.state.spawned.push(sp);
+    this.store.save();
+    this.#log(`spawn ${rule.id}: agent ${id} in ${paneId}`);
+    await this.pushBindings();
+    await this.#spawnProgress(sp, this.#s.spawnStarted(`herdr ${rule.workspace}/${label} (${paneId})`), false, env.id);
+  }
+
+  /** A message from the agent into its place; remembered so a reply to it reaches the agent. */
+  async #spawnSay(sp: Spawned, msg: RenderedMessage, operationId: string, replyTo?: string): Promise<string | null> {
+    try {
+      const r = await this.#deliver(operationId, spawnedRoute(sp, replyTo), msg);
+      if (r.status === "rejected") {
+        this.#log(`spawn ${sp.id}: message refused: ${r.error ?? ""}`);
+        return null;
+      }
+      if (r.providerMessageId) {
+        sp.sent.push(r.providerMessageId);
+        if (sp.sent.length > 200) sp.sent.splice(0, sp.sent.length - 200);
+      }
+      this.store.save();
+      return r.providerMessageId ?? null;
+    } catch (e) {
+      this.#log(`spawn ${sp.id}: message not sent: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * The turn's progress message: sent once, then edited (where the daemon can edit what it sent);
+   * `final` settles it with the answer. Without editing, only the first and the final go out.
+   */
+  async #spawnProgress(sp: Spawned, text: string, final: boolean, replyTo?: string): Promise<void> {
+    const base = `herdr:sp:${sp.id}:t${sp.startedAt}:${sp.turnAt ?? 0}`;
+    if (sp.progressId && this.#canUpdate()) {
+      sp.progressSeq++;
+      try {
+        await this.#o.aio.request(
+          "deliver.update",
+          {
+            operationId: final ? `${base}:final` : `${base}:u${sp.progressSeq}`,
+            route: spawnedRoute(sp),
+            providerMessageId: sp.progressId,
+            message: { text },
+            sequence: sp.progressSeq,
+            ...(final ? { final: true } : {}),
+          },
+          60_000,
+        );
+        return;
+      } catch (e) {
+        this.#log(`spawn ${sp.id}: progress not updated: ${(e as Error).message}`);
+        if (!final) return;
+      }
+    }
+    if (!final && sp.progressId) return;
+    const id = await this.#spawnSay(sp, { text }, final ? `${base}:answer` : `${base}:open`, replyTo);
+    if (!final) {
+      sp.progressId = id;
+      sp.progressSeq = 0;
+    }
+    this.store.save();
+  }
+
+  async #spawnAskChoice(sp: Spawned, replyTo?: string): Promise<void> {
+    let screen = "";
+    try {
+      screen = tailOf(await readAgent(this.#o.herdr, sp.paneId, READ_LINES), SCREEN_LINES);
+    } catch {
+      // nothing to show: the words alone
+    }
+    await this.#spawnSay(
+      sp,
+      { text: this.#s.spawnChoice(fence(redact(screen).text).slice(1)) },
+      `herdr:sp:${sp.id}:ask:${sha(screen).slice(0, 12)}`,
+      replyTo,
+    );
+  }
+
+  /** Every tick: each spawned agent's turn followed; its answer goes out when it stops; gone ones close. */
+  async #followSpawned(agents: HerdrAgent[], now: number): Promise<void> {
+    const st = this.store.state;
+    const open = st.spawned.filter((x) => x.closedAt === null);
+    if (!open.length) return;
+    const views = new Map(this.#watcher.snapshot().map((v) => [v.key, v]));
+    let closed = false;
+    for (const sp of open) {
+      const key = `${sp.paneId}|${sp.terminalId}`;
+      const a = agents.find((x) => paneKey(x) === key);
+      if (!a) {
+        sp.closedAt = now;
+        closed = true;
+        this.#log(`spawn ${sp.id}: pane gone`);
+        if (sp.turnAt !== null) await this.#spawnProgress(sp, this.#s.spawnGone, true);
+        continue;
+      }
+      if (sp.turnAt === null) continue;
+      const status = a.agent_status;
+      if (status === "working" || status === "blocked") sp.sawWork = true;
+      if (status === "blocked" && !this.#asked.has(sp.id)) {
+        this.#asked.add(sp.id);
+        await this.#spawnAskChoice(sp);
+      }
+      if (status !== "blocked") this.#asked.delete(sp.id);
+      const v = views.get(key);
+      const settled = sp.sawWork && (status === "idle" || status === "done") && v && now - v.since >= 4000;
+      if (!settled) {
+        if (now - (this.#spawnShown.get(sp.id) ?? 0) >= 30_000 && sp.progressId && this.#canUpdate()) {
+          this.#spawnShown.set(sp.id, now);
+          await this.#spawnProgress(sp, this.#s.spawnWorking(this.#s.duration(now - sp.turnAt)), false);
+        }
+        continue;
+      }
+      let turn: Turn | null = null;
+      try {
+        turn = (await this.#o.transcripts?.turn(a)) ?? null;
+      } catch (e) {
+        this.#log(`spawn ${sp.id}: transcript not read: ${(e as Error).message}`);
+      }
+      const tools = turn?.steps.filter((x) => x.kind === "tool").length ?? 0;
+      const head = this.#s.spawnDone(this.#s.duration(now - sp.turnAt), turn?.steps.length ?? 0, tools);
+      const answer = turn?.answer.trim() ? redact(turn.answer.trim()).text : this.#s.spawnNoAnswer;
+      sp.lastAt = now;
+      const pages = answerPages(`${answer}\n\n${head}`);
+      await this.#spawnProgress(sp, pages[0] ?? head, true);
+      for (const [i, p] of pages.slice(1).entries()) {
+        await this.#spawnSay(sp, { text: p }, `herdr:sp:${sp.id}:t${sp.turnAt}:more${i + 1}`);
+      }
+      sp.turnAt = null;
+      sp.sawWork = false;
+      sp.progressId = null;
+      this.#spawnShown.delete(sp.id);
+      this.store.save();
+    }
+    if (closed) {
+      this.store.save();
+      await this.pushBindings();
+    }
+  }
+
   /** What did not fit on the notice, after it in its topic; a part that cannot be sent is logged and skipped. */
   async #sendMore(t: Thread, operationId: string, more: RenderedMessage[]): Promise<void> {
     for (const [i, m] of more.entries()) {
@@ -772,6 +1086,8 @@ export class Bridge {
 
   async #handle(item: InboundItem): Promise<void> {
     const env = item.envelope;
+    const rule = ruleFor(this.#c.spawn, item);
+    if (rule) return this.#onSpawnChannel(rule, item);
     if (env.channel !== CHANNEL || env.account !== this.#c.account) return;
     // Other bots are never answered (two bots refusing each other would never stop).
     if (env.sender.isBot) return;

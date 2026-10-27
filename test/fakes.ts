@@ -328,7 +328,7 @@ export function inbound(m: Msg): InboundItem {
 
 // ---- herdr --------------------------------------------------------------------------------------
 
-const READS = new Set(["agent.list", "agent.read", "pane.list", "pane.read", "tab.list"]);
+const READS = new Set(["agent.list", "agent.read", "pane.list", "pane.read", "tab.list", "workspace.list"]);
 /** Key names the fake accepts; herdr refuses others (`invalid_key`) before writing anything. */
 const KEYS = /^(?:[1-9]|esc|enter|tab|up|down|left|right|space|backspace|ctrl\+[a-z])$/;
 
@@ -341,6 +341,8 @@ export class FakeHerdr {
   calls: [string, Record<string, unknown>][] = [];
   /** Error code for a method, e.g. `agent.prompt` → `agent_blocked`. */
   errors = new Map<string, string>();
+  workspaces: { workspace_id: string; label: string }[] = [];
+  #made = 0;
   /** Panes whose history herdr cannot read now (a full-screen program in a dialog): only `visible` works. */
   visibleOnly = new Set<string>();
   #server: Server;
@@ -372,6 +374,31 @@ export class FakeHerdr {
   }
 
   #result(method: string, params: Record<string, unknown>): unknown {
+    if (method === "workspace.list") return { workspaces: this.workspaces };
+    if (method === "workspace.create") {
+      const w = { workspace_id: `w${this.workspaces.length + 10}`, label: String(params.label) };
+      this.workspaces.push(w);
+      return {
+        workspace: w,
+        tab: { tab_id: `${w.workspace_id}:t1` },
+        root_pane: { pane_id: `${w.workspace_id}:p1`, terminal_id: "term_ws" },
+      };
+    }
+    if (method === "tab.create") {
+      const n = ++this.#made;
+      const pane = `${params.workspace_id}:pn${n}`;
+      this.agents.push({ ...agentRow(pane, `term_made_${n}`), cwd: String(params.cwd) });
+      return {
+        tab: { tab_id: `t${n}`, label: params.label },
+        root_pane: { pane_id: pane, terminal_id: `term_made_${n}` },
+      };
+    }
+    if (method === "agent.start") {
+      this.agents = this.agents.map((a) =>
+        a.pane_id === params.pane_id ? { ...a, agent: String(params.kind), agent_status: "idle" } : a,
+      );
+      return {};
+    }
     if (method === "agent.list") return { agents: this.agents.filter((a) => a.agent) };
     if (method === "pane.list") return { panes: this.agents };
     if (method === "tab.list") return { tabs: this.tabs };
@@ -394,6 +421,11 @@ export class FakeHerdr {
   async stop(): Promise<void> {
     await new Promise<void>((r) => this.#server.close(() => r()));
   }
+}
+
+/** A plain shell pane as herdr lists it (no agent yet). */
+function agentRow(pane: string, terminal: string): HerdrAgent {
+  return { pane_id: pane, terminal_id: terminal, agent: null, agent_status: "unknown", focused: false };
 }
 
 // ---- Feishu Open API ---------------------------------------------------------------------------

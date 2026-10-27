@@ -22,7 +22,14 @@ import { herdrClient } from "./herdr.ts";
 import { strings } from "./i18n.ts";
 import { DAEMON_LABEL, HOST_LABEL, install, jobState, uninstall } from "./launchd.ts";
 import type { DeliverResult, HostHelloResult, ReplyRoute } from "./protocol.ts";
-import { appCredentials, CredentialError, lookup, realSecretSource, type SecretSource } from "./secrets.ts";
+import {
+  appCredentials,
+  CredentialError,
+  lookup,
+  namedSecrets,
+  realSecretSource,
+  type SecretSource,
+} from "./secrets.ts";
 import { clearSetup, newCode, readSetup, SETUP_TTL_MS, Store, writePrivate, writeSetup } from "./store.ts";
 import { type Exec, idleMs, machineName, realExec } from "./system.ts";
 import { transcriptSource } from "./transcript.ts";
@@ -122,7 +129,7 @@ async function command(argv: string[], io: Io): Promise<number> {
     case "run":
       return await run(io, c);
     case "daemon":
-      return await runDaemon(c, appCredentials(c, io.secrets), logger(io));
+      return await runDaemon(c, appCredentials(c, io.secrets), logger(io), namedSecrets(c, io.secrets));
     case "setup":
       return await setup(io, c, values.wait === true);
     case "pause":

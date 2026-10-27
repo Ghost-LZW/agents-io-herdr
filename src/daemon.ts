@@ -40,6 +40,8 @@ export function aioConfig(c: Config): Record<string, unknown> {
           locale: c.locale,
         },
       },
+      // More channels as configured (their `env:` values come from `secrets`, in the daemon's environment).
+      ...c.extraChannels,
     ],
   };
 }
@@ -67,13 +69,18 @@ export function checkedAioCli(c: Config): string {
  * Runs `aio serve` in the foreground with the generated config and the credentials in its
  * environment; forwards SIGINT/SIGTERM and exits with the daemon's code.
  */
-export function runDaemon(c: Config, creds: AppCredentials, log: (s: string) => void): Promise<number> {
+export function runDaemon(
+  c: Config,
+  creds: AppCredentials,
+  log: (s: string) => void,
+  secrets: Record<string, string> = {},
+): Promise<number> {
   const cli = checkedAioCli(c);
   const file = writeAioConfig(c);
   log(`aio serve --config ${file}`);
   const child = spawn(process.execPath, [cli, "serve", "--config", file], {
     cwd: c.paths.aioDataDir,
-    env: { ...process.env, [APP_ID_VAR]: creds.appId, [APP_SECRET_VAR]: creds.appSecret },
+    env: { ...process.env, ...secrets, [APP_ID_VAR]: creds.appId, [APP_SECRET_VAR]: creds.appSecret },
     stdio: ["ignore", "inherit", "inherit"],
   });
   const forward = (sig: NodeJS.Signals) => () => child.kill(sig);

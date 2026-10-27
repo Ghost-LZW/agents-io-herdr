@@ -70,3 +70,14 @@ export function appCredentials(c: Config, src: SecretSource): AppCredentials {
   if (!secret.ok) throw new CredentialError(`Feishu app secret not found (${secret.reason})`);
   return { appId: id.value, appSecret: secret.value };
 }
+
+/** The values of `secrets` (config), for the daemon's environment; a missing one is an error naming it. */
+export function namedSecrets(c: Config, src: SecretSource): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, refs] of Object.entries(c.secrets)) {
+    const r = lookup(refs, src);
+    if (!r.ok) throw new CredentialError(`secret ${name} not found (${r.reason})`);
+    out[name] = r.value;
+  }
+  return out;
+}

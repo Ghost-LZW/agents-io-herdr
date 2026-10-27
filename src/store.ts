@@ -7,6 +7,7 @@ import { createHash, randomInt } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { DialogOption } from "./screen.ts";
+import type { Spawned } from "./spawn.ts";
 
 export interface Owner {
   /** The owner's Feishu id as lark-bot reports senders (a union_id). */
@@ -76,6 +77,8 @@ export interface State {
   views: View[];
   /** Live cards of turns still running (settled ones are removed). */
   live: LiveCard[];
+  /** Agents started from a message (config `spawn`), open and lately closed. */
+  spawned: Spawned[];
   /** Inbound items already taken (`channelRef`), oldest first, capped: the queue delivers at least once. */
   handled: string[];
 }
@@ -103,6 +106,7 @@ export const emptyState = (): State => ({
   messages: [],
   views: [],
   live: [],
+  spawned: [],
   handled: [],
 });
 
@@ -198,6 +202,7 @@ export class Store {
   }
 
   prune(now: number): void {
+    this.state.spawned = this.state.spawned.filter((x) => x.closedAt === null || now - x.closedAt < CLOSED_KEEP_MS);
     const keep = this.state.threads.filter((t) => t.closedAt === null || now - t.closedAt < CLOSED_KEEP_MS);
     if (keep.length === this.state.threads.length) return;
     const ids = new Set(keep.map((t) => t.id));
