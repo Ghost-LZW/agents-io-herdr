@@ -10,7 +10,7 @@
  */
 
 import { spawn as run } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readdirSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { SpawnHook, SpawnRule } from "./config.ts";
 import type { ContentBlock, InboundEnvelope, InboundItem, ReplyRoute } from "./protocol.ts";
@@ -190,6 +190,22 @@ function files(content: ContentBlock[], blobDir: string | null): string {
  * linked into `.claude/skills` and `.agents/skills` (so Claude Code and Codex both find them).
  * Links that are there already stay.
  */
+/**
+ * The agent's `.mcp.json` (Claude Code reads project MCP servers from it), with the tokens filled in:
+ * written 0600 next to the skills; an existing file is replaced (the servers are the rule's).
+ */
+export function writeMcp(dir: string, servers: Record<string, { url: string; token?: string }>): void {
+  if (!Object.keys(servers).length) return;
+  const mcpServers = Object.fromEntries(
+    Object.entries(servers).map(([k, v]) => [
+      k,
+      { type: "http", url: v.url, ...(v.token ? { headers: { Authorization: `Bearer ${v.token}` } } : {}) },
+    ]),
+  );
+  writeFileSync(join(dir, ".mcp.json"), `${JSON.stringify({ mcpServers }, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(join(dir, ".mcp.json"), 0o600);
+}
+
 export function prepareDir(rule: SpawnRule, id: string): string {
   const dir = rule.dirPerAgent ? join(rule.cwd, id) : rule.cwd;
   mkdirSync(dir, { recursive: true, mode: 0o700 });

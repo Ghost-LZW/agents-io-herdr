@@ -22,6 +22,8 @@ export function aioConfig(c: Config): Record<string, unknown> {
     // A dedicated daemon: no web console (its default port would clash with another daemon),
     // no external MCP endpoint, no output tools, no local rules — only the host's table routes.
     console: { enabled: false },
+    // The external MCP endpoint, when configured: agents outside the daemon (spawned ones) send and schedule through it.
+    ...(c.externalMcp ? { externalMcp: c.externalMcp } : {}),
     outputTools: false,
     bindings: [],
     policy: { owners: [], strangers: "drop" },

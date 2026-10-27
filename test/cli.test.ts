@@ -153,6 +153,19 @@ describe("the project's daemon", () => {
     expect(readFileSync(file, "utf8")).not.toMatch(/secret-value|app-test/);
   });
 
+  it("passes externalMcp to the daemon as written; spawn mcp tokens are references only", () => {
+    const tmp = tempDir();
+    cleanups.push(tmp.done);
+    const ext = { listen: "127.0.0.1:7465", clients: { ai: { tokenFile: "~/x/ai.token", scopes: ["send:side:*"] } } };
+    const c = testConfig(tmp.dir, { externalMcp: ext });
+    expect((aioConfig(c) as { externalMcp: unknown }).externalMcp).toEqual(ext);
+    expect(() =>
+      testConfig(tmp.dir, {
+        spawn: [{ channel: "s", account: "a", owner: "o", mcp: { x: { url: "http://h", token: "literal" } } }],
+      }),
+    ).toThrow(/env:NAME/);
+  });
+
   it("takes more channels as written, and their secrets only by name", () => {
     const tmp = tempDir();
     cleanups.push(tmp.done);

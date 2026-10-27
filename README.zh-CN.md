@@ -185,7 +185,8 @@ agents-io-herdr setup --wait
 | `notify.liveEverySec` | 5 | 实时卡片多久按会话记录更新一次（至少 2） |
 | `channels` | — | 给项目守护进程加的 agents-io 通道条目，原样写入 |
 | `secrets` | — | `名字: "keychain:…" \| "env:…"`：放进守护进程的环境变量，给 `channels` 里的 `env:名字` 用 |
-| `spawn` | — | 从消息启动 agent 的规则（见上）：`channel`、`account`、`owner` 必填；`kind`（`claude`）、`args`、`cwd`、`env`、`skills`、`preamble`、`before`、`trigger`、`dirPerAgent`、`workspace`（`ai`）、`id`（`ai`） |
+| `externalMcp` | — | 守护进程的对外 MCP 端点（agents-io 的 `externalMcp`：`listen`、带 `tokenFile` 和 `scopes` 的 `clients`），原样写入 |
+| `spawn` | — | 从消息启动 agent 的规则（见上）：`channel`、`account`、`owner` 必填；`kind`（`claude`）、`args`、`cwd`、`env`、`skills`、`preamble`、`before`、`mcp`（名字 → `{ url, token: "env:…" | "keychain:…" }`，写进 agent 的 `.mcp.json`）、`trigger`、`dirPerAgent`、`workspace`（`ai`）、`id`（`ai`） |
 | `workbench.create` | true | 绑定主人时自动建工作台群 |
 | `workbench.name` | `<machine> 终端` / `<machine> terminal` | 群名 |
 | `dataDir` | `~/.local/share/agents-io-herdr`（或 `$AGENTS_IO_HERDR_DATA`） | 状态和守护进程的数据 |
