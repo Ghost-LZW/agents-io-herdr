@@ -170,7 +170,15 @@ describe("the project's daemon", () => {
     const tmp = tempDir();
     cleanups.push(tmp.done);
     const c = testConfig(tmp.dir, { spawn: [{ channel: "side", account: "me", owner: "u1", skills: ["~/s"] }] });
-    expect(c.spawn[0]).toMatchObject({ id: "ai", kind: "claude", args: [], workspace: "ai", env: {}, preamble: "" });
+    expect(c.spawn[0]).toMatchObject({
+      id: "ai",
+      kind: "claude",
+      args: [],
+      workspace: "ai",
+      env: {},
+      preamble: "",
+      dirPerAgent: true,
+    });
     expect(c.spawn[0]?.skills[0]).not.toMatch(/^~/);
     expect(() => testConfig(tmp.dir, { spawn: [{ channel: "side", account: "me" }] })).toThrow(
       /spawn\[0\]\.owner is required/,

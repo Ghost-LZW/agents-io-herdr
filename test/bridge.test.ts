@@ -1152,6 +1152,15 @@ describe("agents started from a message (spawn)", () => {
     ]);
   });
 
+  it("with dirPerAgent false, every agent works in the rule's directory, skills linked there once", async () => {
+    w.cfg.spawn[0] = { ...(w.cfg.spawn[0] as SpawnRule), dirPerAgent: false };
+    await sendItem(w, side({ id: "m1", text: "a", trigger: true }));
+    await sendItem(w, side({ id: "m2", text: "b", trigger: true, chat: "g_2" }));
+    const cwds = w.herdr.calls.filter(([m]) => m === "tab.create").map(([, p]) => p.cwd);
+    expect(cwds).toEqual([tmp.dir, tmp.dir]);
+    expect(lstatSync(join(tmp.dir, ".claude/skills/skill-x")).isSymbolicLink()).toBe(true);
+  });
+
   it("tells the owner when the agent cannot start, and ignores the trigger from anyone else", async () => {
     w.herdr.errors.set("agent.start", "agent_not_ready");
     await sendItem(w, side({ id: "m1", text: "go", trigger: true }));

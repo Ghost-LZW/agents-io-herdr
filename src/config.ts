@@ -58,8 +58,10 @@ export interface SpawnRule {
   kind: string;
   /** Arguments after the agent's executable. */
   args: string[];
-  /** The pane's working directory (one subdirectory per agent is made in it). */
+  /** The pane's working directory (one subdirectory per agent is made in it, unless `dirPerAgent` is false). */
   cwd: string;
+  /** false: every agent works in `cwd` itself (a shared checkout such as a facts repository). */
+  dirPerAgent: boolean;
   /** Environment of the pane: values `env:…` / `keychain:…` are looked up, others as written. */
   env: Record<string, SecretRef>;
   /** Skill directories linked into each agent's `.claude/skills/` (and `.agents/skills/`). */
@@ -197,6 +199,7 @@ function spawnRule(r: Raw, where: string, path: (p: string) => string): SpawnRul
     kind: str(r.kind, `${where}.kind`) ?? "claude",
     args: list("args"),
     cwd: path(str(r.cwd, `${where}.cwd`) ?? "~/.local/share/agents-io-herdr/agents"),
+    dirPerAgent: bool(r.dirPerAgent, `${where}.dirPerAgent`, true),
     env,
     skills: list("skills").map(path),
     preamble: str(r.preamble, `${where}.preamble`) ?? "",
