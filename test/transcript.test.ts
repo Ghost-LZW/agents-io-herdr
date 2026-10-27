@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { strings } from "../src/i18n.ts";
 import { progressOf } from "../src/live.ts";
 import { noticeMessages, pages, processPages } from "../src/notice.ts";
-import { startupAnswer } from "../src/spawn.ts";
+import { attachments, startupAnswer } from "../src/spawn.ts";
 import { claudeTurn, codexTurn, subjectOf, transcriptSource } from "../src/transcript.ts";
 import { tempDir } from "./fakes.ts";
 import { agent } from "./fixtures.ts";
@@ -273,5 +273,30 @@ describe("startupAnswer", () => {
   it("leaves any other dialog alone", () => {
     expect(startupAnswer("Do you want to proceed?\n❯ 1. Yes\n  2. No")).toBeNull();
     expect(startupAnswer("Quick safety check: do you trust this folder?\n(no options)")).toBeNull();
+  });
+});
+
+describe("attachments", () => {
+  let tmp: ReturnType<typeof tempDir> | null = null;
+  afterEach(() => tmp?.done());
+
+  it("gives the blob file of an image as a path, and names what is not there", () => {
+    tmp = tempDir();
+    const hex = "ab".repeat(32);
+    mkdirSync(join(tmp.dir, "ab"), { recursive: true });
+    writeFileSync(join(tmp.dir, "ab", `${hex}.jpg`), "x");
+    writeFileSync(join(tmp.dir, "ab", `${hex}.json`), "{}");
+    const list = attachments(
+      [
+        { type: "text", text: "see" },
+        { type: "image", ref: `sha256:${hex}`, mime: "image/jpeg", name: "cat.jpg" },
+        { type: "file", ref: "lark-file:x/y", mime: "application/pdf" },
+      ],
+      tmp.dir,
+    );
+    expect(list).toEqual([
+      `image "cat.jpg" (image/jpeg): ${join(tmp.dir, "ab", `${hex}.jpg`)}`,
+      "file (application/pdf): not available here (lark-file:x/y)",
+    ]);
   });
 });

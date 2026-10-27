@@ -2,7 +2,7 @@
  * The bridge end to end, against a fake agents-io daemon (host protocol on a temp unix socket), a
  * fake herdr socket server and a fake Feishu Open API. No real Feishu, herdr or daemon.
  */
-import { existsSync, lstatSync, mkdirSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AioClient } from "../src/aio.ts";
@@ -1110,6 +1110,21 @@ describe("agents started from a message (spawn)", () => {
       "agent.prompt",
       { target: w.store.state.spawned[1]?.paneId, text: "thanks" },
     ]);
+  });
+
+  it("hands the agent the message's images as file paths in the daemon's blob store", async () => {
+    const hex = "cd".repeat(32);
+    const dir = join(w.cfg.paths.aioDataDir, "blobs", "cd");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${hex}.png`), "PNG");
+    const item = side({ id: "m1", text: "what is in it?", trigger: true });
+    item.envelope.content = [...item.envelope.content, { type: "image", ref: `sha256:${hex}`, mime: "image/png" }];
+    item.input.content = item.envelope.content;
+    await sendItem(w, item);
+    const prompt = String(w.herdr.calls.find(([m]) => m === "agent.prompt")?.[1].text);
+    expect(prompt).toContain(
+      `Attached (open these files to see them):\n- image (image/png): ${join(dir, `${hex}.png`)}`,
+    );
   });
 
   it("presses a key when the agent waits on a dialog, and says so when it asks", async () => {
