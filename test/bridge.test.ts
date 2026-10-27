@@ -1171,6 +1171,10 @@ describe("agents started from a message (spawn)", () => {
         },
       },
     });
+    // Approved for Claude Code, so it does not ask at startup.
+    expect(JSON.parse(readFileSync(join(tmp.dir, sp?.id ?? "", ".claude/settings.local.json"), "utf8"))).toEqual({
+      enabledMcpjsonServers: ["agents_io"],
+    });
   });
 
   it("hands the agent the message's images as file paths in the daemon's blob store", async () => {

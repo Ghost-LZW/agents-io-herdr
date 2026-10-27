@@ -10,7 +10,16 @@
  */
 
 import { spawn as run } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import type { SpawnHook, SpawnRule } from "./config.ts";
 import type { ContentBlock, InboundEnvelope, InboundItem, ReplyRoute } from "./protocol.ts";
@@ -204,6 +213,23 @@ export function writeMcp(dir: string, servers: Record<string, { url: string; tok
   );
   writeFileSync(join(dir, ".mcp.json"), `${JSON.stringify({ mcpServers }, null, 2)}\n`, { mode: 0o600 });
   chmodSync(join(dir, ".mcp.json"), 0o600);
+  // Claude Code asks before it uses a project's .mcp.json servers: these are the rule's, so they are
+  // approved in the directory's local settings (kept: other keys there are left as they are).
+  const settings = join(dir, ".claude", "settings.local.json");
+  mkdirSync(join(dir, ".claude"), { recursive: true });
+  let cur: Record<string, unknown> = {};
+  try {
+    cur = JSON.parse(readFileSync(settings, "utf8")) as Record<string, unknown>;
+  } catch {
+    // none yet, or not JSON: written anew
+  }
+  const enabled = new Set([
+    ...(Array.isArray(cur.enabledMcpjsonServers) ? (cur.enabledMcpjsonServers as string[]) : []),
+    ...Object.keys(servers),
+  ]);
+  writeFileSync(settings, `${JSON.stringify({ ...cur, enabledMcpjsonServers: [...enabled].sort() }, null, 2)}\n`, {
+    mode: 0o600,
+  });
 }
 
 export function prepareDir(rule: SpawnRule, id: string): string {
