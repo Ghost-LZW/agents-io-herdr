@@ -1076,7 +1076,7 @@ describe("agents started from a message (spawn)", () => {
       account: "me",
       conversationId: "g_1",
       threadId: "m0",
-      replyToMessageId: "m1",
+      replyToMessageId: "m0",
     });
     expect(first?.message.text).toMatch(/^⏳ On it/);
     expect(w.aio.lastTable?.bindings.some((b) => b.match.conversation === "g_1")).toBe(true);
@@ -1191,6 +1191,21 @@ describe("agents started from a message (spawn)", () => {
     w.herdr.agents = w.herdr.agents.map((a) => (a.pane_id === pane ? { ...a, agent_status: "idle" } : a));
     await run(w, 6);
     expect(w.aio.acks.at(-1)).toEqual({ messageId: "m1", state: "done" });
+  });
+
+  it("when the channel refuses to edit the progress message, the answer goes out as a new message", async () => {
+    await sendItem(w, side({ id: "m1", text: "go", topic: "m0", trigger: true }));
+    const pane = w.store.state.spawned[0]?.paneId ?? "";
+    w.aio.refuseUpdates = true;
+    w.herdr.agents = w.herdr.agents.map((a) => (a.pane_id === pane ? { ...a, agent_status: "working" } : a));
+    await run(w, 2);
+    answer.answer = "The answer itself.";
+    w.herdr.agents = w.herdr.agents.map((a) => (a.pane_id === pane ? { ...a, agent_status: "idle" } : a));
+    await run(w, 6);
+    expect(w.aio.updates.at(-1)).toMatchObject({ final: true });
+    const last = w.aio.delivered.at(-1);
+    expect(last?.message.text).toMatch(/^The answer itself\.\n\n✓ Done/);
+    expect(last?.route).toMatchObject({ threadId: "m0", replyToMessageId: "m0" });
   });
 
   it("/close in the topic closes the agent's tab, and later words there are not for it", async () => {
