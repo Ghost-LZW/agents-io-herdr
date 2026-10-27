@@ -1018,7 +1018,9 @@ export class Bridge {
       channel: env.channel,
       account: env.account,
       conversationId: env.conversation.id,
-      topic: topicOf(item),
+      // In a topic: that topic. Elsewhere the trigger opens one (a reply in thread rooted at it), so
+      // the answer and the conversation with the agent stay under the trigger.
+      topic: topicOf(item) ?? env.id,
       startMessageId: env.id,
       sent: [],
       progressId: null,
