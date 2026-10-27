@@ -14,6 +14,7 @@ import type {
   ContentBlock,
   DeliverResult,
   Frame,
+  InboundEnvelope,
   InboundItem,
   RenderedMessage,
   ReplyRoute,
@@ -59,6 +60,9 @@ export class FakeAio {
   refuse: ((d: Delivery) => string | null) | null = null;
   /** Features `host.hello` answers. */
   features = ["host.takeover"];
+  /** What `history.read` answers, and its requests. */
+  history: InboundEnvelope[] = [];
+  readonly historyReads: Frame[] = [];
   /** deliver.update answers rejected (the channel refused the edit). */
   refuseUpdates = false;
   /** `message.ack` requests, in order. */
@@ -204,6 +208,10 @@ export class FakeAio {
           };
       this.#results.set(d.operationId, r);
       return this.#reply(c, id, r);
+    }
+    if (f.type === "history.read") {
+      this.historyReads.push(f);
+      return this.#reply(c, id, { messages: this.history });
     }
     if (f.type === "message.ack") {
       this.acks.push({ messageId: String(f.messageId), state: String(f.state) });
