@@ -231,12 +231,16 @@ export function liveMessage(
   },
 ): RenderedMessage {
   const { s } = o;
-  const head = s.workingHead(o.machine, placeOf(a), agentName(a));
+  const p = o.progress;
+  const done = p.status !== "running" && p.status !== "requires_action";
+  // Settled, the card is the turn's only message: it says it finished, and how long it took.
+  const head =
+    p.status === "completed" && p.startedAt !== undefined && p.endedAt !== undefined
+      ? s.doneHead(o.machine, placeOf(a), agentName(a), s.duration(p.endedAt - p.startedAt))
+      : s.workingHead(o.machine, placeOf(a), agentName(a));
   const title = titleOf(a);
   const prompt = turn?.prompt.trim() ? `${s.asked} ${redact(clip(oneLine(turn.prompt), 200)).text}` : "";
   const top = [title, prompt].filter(Boolean).join("\n");
-  const p = o.progress;
-  const done = p.status !== "running" && p.status !== "requires_action";
   const answer = done ? [top, p.answer].filter(Boolean).join("\n\n") : "";
   return {
     text: answer || top || head,

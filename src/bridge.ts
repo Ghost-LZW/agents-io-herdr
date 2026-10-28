@@ -520,9 +520,12 @@ export class Bridge {
         return true;
       }
       const a = n.agent;
-      const thread = st.openThread(paneKey(a), d.chatId);
+      const thread = st.openThread(a.pane_id, d.chatId);
       const threadId = thread?.id ?? p.newThreadId;
-      const [msg, ...more] = noticeMessages(n, this.#view(p, d, threadId)) as [RenderedMessage, ...RenderedMessage[]];
+      const view = this.#view(p, d, threadId);
+      // The settled live card is the turn's message: its answer and process are there already.
+      if (n.kind === "done" && view.live) return true;
+      const [msg, ...more] = noticeMessages(n, view) as [RenderedMessage, ...RenderedMessage[]];
       const { r, thread: t } = await this.#toPane(a, d, msg, operationId, threadId, now);
       if (r.status === "rejected") {
         this.#log(`notice for ${a.pane_id} refused in ${d.workbench ? "the workbench" : "the DM"}: ${r.error ?? ""}`);
@@ -550,30 +553,18 @@ export class Bridge {
     now: number,
   ): Promise<{ r: DeliverResult; thread: Thread | null; route: ReplyRoute }> {
     const st = this.store;
-    const key = paneKey(a);
-    const thread = st.openThread(key, d.chatId);
+    let thread = st.openThread(a.pane_id, d.chatId);
+    // In the workbench a pane's topic starts with a line saying which pane it is, not with its first notice.
+    if (!thread && d.workbench) thread = await this.#openTopic(a, d, operationId, threadId, now);
+    if (thread && thread.terminalId !== a.terminal_id) await this.#newProgram(thread, a, operationId);
     const route = thread ? this.#threadRoute(thread) : this.#route(d.chatId);
     const r = await this.#deliver(operationId, route, msg);
     if (r.status === "rejected") return { r, thread, route };
     const mid = r.providerMessageId;
     let t = thread;
     if (!t && mid) {
-      t = {
-        id: threadId,
-        paneKey: key,
-        paneId: a.pane_id,
-        terminalId: a.terminal_id,
-        agent: agentName(a),
-        place: placeOf(a),
-        chatId: d.chatId,
-        workbench: d.workbench,
-        rootMessageId: mid,
-        threadId: d.workbench ? (r.providerThreadId ?? null) : null,
-        options: [],
-        openedAt: now,
-        lastAt: now,
-        closedAt: null,
-      };
+      t = this.#newThread(a, d, threadId, mid, now);
+      if (d.workbench) t.threadId = r.providerThreadId ?? null;
       st.state.threads.push(t);
     }
     if (t) {
@@ -582,6 +573,69 @@ export class Bridge {
       if (mid) st.remember(mid, t.id);
     }
     return { r, thread: t, route };
+  }
+
+  #newThread(a: HerdrAgent, d: Destination, id: string, rootMessageId: string, now: number): Thread {
+    return {
+      id,
+      paneKey: paneKey(a),
+      paneId: a.pane_id,
+      terminalId: a.terminal_id,
+      agent: agentName(a),
+      place: placeOf(a),
+      chatId: d.chatId,
+      workbench: d.workbench,
+      rootMessageId,
+      threadId: null,
+      options: [],
+      openedAt: now,
+      lastAt: now,
+      closedAt: null,
+    };
+  }
+
+  /** A pane's workbench topic, opened by its root: machine, workspace, tab, directory and agent. Null when refused. */
+  async #openTopic(
+    a: HerdrAgent,
+    d: Destination,
+    operationId: string,
+    threadId: string,
+    now: number,
+  ): Promise<Thread | null> {
+    let workspace = a.workspace_id ?? "";
+    let tab = a.tab_id ?? "";
+    try {
+      const [ws, tabs] = await Promise.all([listWorkspaces(this.#o.herdr), listTabs(this.#o.herdr)]);
+      workspace = ws.find((x) => x.workspace_id === a.workspace_id)?.label || workspace;
+      const t = tabs.find((x) => x.tab_id === a.tab_id);
+      if (t) tab = t.label || String(t.number);
+    } catch {
+      // the ids then
+    }
+    const text = this.#s.topicRoot(this.#o.machine, workspace || "-", tab || "-", placeOf(a), agentName(a));
+    const r = await this.#deliver(`${operationId}:root`, this.#route(d.chatId), { text });
+    if (r.status === "rejected" || !r.providerMessageId) {
+      this.#log(`topic for ${a.pane_id} not opened: ${r.error ?? r.status}`);
+      return null;
+    }
+    const t = this.#newThread(a, d, threadId, r.providerMessageId, now);
+    t.threadId = r.providerThreadId ?? null;
+    this.store.state.threads.push(t);
+    this.store.remember(r.providerMessageId, t.id);
+    this.store.save();
+    return t;
+  }
+
+  /** Another program in the pane: its topic goes on, with a line between the old one and the new. */
+  async #newProgram(t: Thread, a: HerdrAgent, operationId: string): Promise<void> {
+    t.terminalId = a.terminal_id;
+    t.paneKey = paneKey(a);
+    t.agent = agentName(a);
+    t.place = placeOf(a);
+    t.options = [];
+    this.store.save();
+    if (t.workbench)
+      await this.#say(t, this.#threadRoute(t), { text: this.#s.agentChanged(t.agent) }, `${operationId}:sep`);
   }
 
   // ---- live cards ----------------------------------------------------------------------------
@@ -650,7 +704,7 @@ export class Bridge {
     const progress = progressOf(turn, { turnId, status: this.#liveStatus(a), startedAt: stretch });
     for (const d of this.#destinations()) {
       const msg = liveMessage(a, turn, { machine: this.#o.machine, s: this.#s, topic: d.workbench, progress });
-      const threadId = this.store.openThread(v.key, d.chatId)?.id ?? newId();
+      const threadId = this.store.openThread(a.pane_id, d.chatId)?.id ?? newId();
       try {
         const { r, route } = await this.#toPane(
           a,
@@ -761,9 +815,11 @@ export class Bridge {
       topic: !!c.topic,
       progress,
     });
+    let settled = true;
     try {
       const r = await this.#update(c, msg, true);
       if (r.status === "rejected") this.#log(`live card for ${c.paneId}: settling refused: ${r.error ?? ""}`);
+      settled = r.status !== "rejected";
     } catch (e) {
       // The daemon is away: try again next tick.
       this.#log(`live card for ${c.paneId}: settling failed: ${(e as Error).message}`);
@@ -773,7 +829,8 @@ export class Bridge {
     st.live = st.live.filter((x) => x !== c);
     this.store.save();
     this.#liveShown.delete(c.turnId);
-    this.#liveSettled.set(c.paneKey, { chatId: c.chatId, at: now });
+    // A card that could not take the answer: the done notice carries it instead.
+    if (settled) this.#liveSettled.set(c.paneKey, { chatId: c.chatId, at: now });
     this.#log(`live card for ${c.paneId} settled`);
   }
 
@@ -1366,10 +1423,19 @@ export class Bridge {
     };
   }
 
-  /** Panes no longer in herdr (or running something else now): their threads close, a topic says so. */
+  /** Panes no longer in herdr: their threads close, a topic says so (another program in a pane keeps its topic). */
   async #closeGone(agents: HerdrAgent[]): Promise<void> {
-    const live = new Set(agents.filter((a) => a.agent).map(paneKey));
-    const gone = this.store.state.threads.filter((t) => t.closedAt === null && !live.has(t.paneKey));
+    const withAgent = new Set(agents.filter((a) => a.agent).map((a) => a.pane_id));
+    let missing = this.store.state.threads.filter((t) => t.closedAt === null && !withAgent.has(t.paneId));
+    if (!missing.length) return;
+    // No agent in it now: the pane may still be there (its agent quit, another may start).
+    try {
+      const panes = new Set((await listPanes(this.#o.herdr)).map((p) => p.pane_id));
+      missing = missing.filter((t) => !panes.has(t.paneId));
+    } catch {
+      return;
+    }
+    const gone = missing;
     if (!gone.length) return;
     const now = this.#now();
     for (const t of gone) t.closedAt = now;
@@ -1647,8 +1713,14 @@ export class Bridge {
 
   // -- replies and buttons
 
-  /** The pane of a thread, if it still runs the same program; closes the thread when it does not. */
-  async #paneOf(t: Thread): Promise<{ ok: true; agent: HerdrAgent } | { ok: false; gone: boolean; reason: string }> {
+  /**
+   * The agent in a thread's pane. `sameProgram`: only the one the thread last saw (a dialog's
+   * buttons are for it); otherwise a new agent in the pane takes the thread over.
+   */
+  async #paneOf(
+    t: Thread,
+    sameProgram = false,
+  ): Promise<{ ok: true; agent: HerdrAgent } | { ok: false; gone: boolean; reason: string }> {
     let agents: HerdrAgent[];
     try {
       agents = await listAgents(this.#o.herdr);
@@ -1656,10 +1728,14 @@ export class Bridge {
       return { ok: false, gone: false, reason: e instanceof HerdrError ? e.code : (e as Error).message };
     }
     const a = agents.find((x) => x.pane_id === t.paneId);
-    if (!a || a.terminal_id !== t.terminalId || !a.agent) {
-      t.closedAt ??= this.#now();
-      this.store.save();
+    if (!a?.agent || (sameProgram && a.terminal_id !== t.terminalId))
       return { ok: false, gone: true, reason: "pane_gone" };
+    if (a.terminal_id !== t.terminalId) {
+      t.terminalId = a.terminal_id;
+      t.paneKey = paneKey(a);
+      t.agent = agentName(a);
+      t.options = [];
+      this.store.save();
     }
     return { ok: true, agent: a };
   }
@@ -1747,7 +1823,7 @@ export class Bridge {
     if (!this.#isOwner(item)) return say(s.notOwner);
     if (t.closedAt !== null) return say(s.gone);
     if (this.paused) return say(s.paused);
-    const pane = await this.#paneOf(t);
+    const pane = await this.#paneOf(t, true);
     if (!pane.ok) return say(pane.gone ? s.gone : s.herdrDown(pane.reason));
     try {
       await sendKeys(this.#o.herdr, t.paneId, [key]);
