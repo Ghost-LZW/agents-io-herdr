@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { strings } from "../src/i18n.ts";
 import { buttons, noticeMessage, statusMessage } from "../src/notice.ts";
-import { REDACTED, redact } from "../src/redact.ts";
+import { hideSecrets, REDACTED, redact } from "../src/redact.ts";
 import { cutSidePanel, optionsOf, summaryOf, tailOf } from "../src/screen.ts";
 import { agent } from "./fixtures.ts";
 
@@ -152,6 +152,16 @@ describe("redact", () => {
       const r = redact(input);
       expect(r.text, input).toContain(expected);
       expect(r.count, input).toBeGreaterThan(0);
+    }
+  });
+
+  it("with secret hiding off (notify.redact: false), only email addresses change", () => {
+    hideSecrets(false);
+    try {
+      const t = `token=abc123def456ghi ghp_${"A1b2".repeat(9)} dev@example.com`;
+      expect(redact(t).text).toBe(`token=abc123def456ghi ghp_${"A1b2".repeat(9)} …@example.com`);
+    } finally {
+      hideSecrets(true);
     }
   });
 

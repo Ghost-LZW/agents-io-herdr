@@ -32,6 +32,8 @@ export interface Config {
    * bubble) updated every `everyMs` until it ends; null: off.
    */
   live: { afterMs: number; everyMs: number } | null;
+  /** Hide secret-looking strings in what is sent (email addresses are hidden always: Feishu refuses them). */
+  redact: boolean;
   rules: WatchRules;
   /**
    * More channels for the project's daemon (agents-io channel entries, e.g. a `type: "module"`
@@ -326,6 +328,7 @@ export function resolveConfig(
         everyMs: Math.max(2000, seconds(notify.liveEverySec, "notify.liveEverySec", 5000)),
       }
     : null;
+  const redact = bool(notify.redact, "notify.redact", true);
   const dataDir = str(raw.dataDir, "dataDir");
   const data = dataDir ? path(dataDir) : defaultDataDir(env, home);
   const aioData = join(data, "aio");
@@ -359,6 +362,7 @@ export function resolveConfig(
       name: str(workbench.name, "workbench.name"),
     },
     live,
+    redact,
     rules,
     extraChannels,
     secrets,

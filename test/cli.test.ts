@@ -61,6 +61,7 @@ describe("config", () => {
       { env: {}, home: "/home/dev", file: "/home/dev/.config/agents-io-herdr/config.json", platform: "darwin" },
     );
     expect(c.locale).toBe("zh");
+    expect(c.redact).toBe(true);
     expect(c.account).toBe("herdr");
     expect(c.feishu.appSecret).toEqual(["env:AGENTS_IO_HERDR_APP_SECRET", "keychain:agents-io-herdr.app-secret"]);
     expect(c.rules).toMatchObject({
