@@ -16,6 +16,11 @@ const keepPrefix = (_m: string, prefix: string) => `${prefix}${REDACTED}`;
 const SECRET_KEY =
   "[A-Za-z0-9_.-]*?(?:secret|password|passwd|pwd|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|credential)";
 
+const EMAIL: Rule = {
+  re: /\b[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})\b/g,
+  replace: (_m, domain) => `…@${domain}`,
+};
+
 const RULES: Rule[] = [
   // PEM private keys (RSA, EC, OPENSSH, PKCS#8, PGP).
   {
@@ -33,7 +38,7 @@ const RULES: Rule[] = [
   { re: /\bAKIA[0-9A-Z]{16}\b/g, replace: () => `AKIA${REDACTED}` },
   // Email addresses: Feishu's audit refuses a message that carries one (230028 "sensitive data:
   // EMAIL_ADDRESS"), and an edit of a card that gained one fails the same way. The domain stays.
-  { re: /\b[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})\b/g, replace: (_m, domain) => `…@${domain}` },
+  EMAIL,
   // Google API keys.
   { re: /\bAIza[0-9A-Za-z_-]{35}\b/g, replace: () => `AIza${REDACTED}` },
   // JSON Web Tokens.
@@ -54,6 +59,12 @@ const RULES: Rule[] = [
   },
 ];
 
+/** Secret hiding on (the default) or off (config `notify.redact: false`); email addresses are hidden either way. */
+let secretsHidden = true;
+export const hideSecrets = (on: boolean) => {
+  secretsHidden = on;
+};
+
 export interface Redacted {
   text: string;
   count: number;
@@ -62,7 +73,7 @@ export interface Redacted {
 export function redact(text: string): Redacted {
   let count = 0;
   let out = text;
-  for (const rule of RULES) {
+  for (const rule of secretsHidden ? RULES : [EMAIL]) {
     out = out.replace(rule.re, (...args: unknown[]) => {
       const m = String(args[0]);
       // replace() passes match, groups…, offset (a number), input[, named groups].

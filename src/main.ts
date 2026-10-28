@@ -22,6 +22,7 @@ import { herdrClient } from "./herdr.ts";
 import { strings } from "./i18n.ts";
 import { DAEMON_LABEL, HOST_LABEL, install, jobState, uninstall } from "./launchd.ts";
 import type { DeliverResult, HostHelloResult, ReplyRoute } from "./protocol.ts";
+import { hideSecrets } from "./redact.ts";
 import {
   appCredentials,
   CredentialError,
@@ -193,6 +194,7 @@ async function run(io: Io, c: Config): Promise<number> {
     onState: (s, detail) => log(`daemon: ${s}${detail ? ` (${detail})` : ""}`),
     log,
   });
+  hideSecrets(c.redact);
   bridge = new Bridge({
     config: c,
     machine,
