@@ -829,8 +829,8 @@ export class Bridge {
     st.live = st.live.filter((x) => x !== c);
     this.store.save();
     this.#liveShown.delete(c.turnId);
-    // A card that could not take the answer: the done notice carries it instead.
-    if (settled) this.#liveSettled.set(c.paneKey, { chatId: c.chatId, at: now });
+    // Only a card that took the answer stands for the turn; otherwise (refused, or from before a restart) the done notice carries it.
+    if (settled && a && seen) this.#liveSettled.set(c.paneKey, { chatId: c.chatId, at: now });
     this.#log(`live card for ${c.paneId} settled`);
   }
 
