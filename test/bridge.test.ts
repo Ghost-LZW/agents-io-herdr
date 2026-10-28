@@ -58,6 +58,7 @@ async function world(
     transcripts?: TranscriptSource;
     aioFeatures?: string[];
     runHook?: HookRunner;
+    idleMs?: () => number | null;
   } = {},
 ): Promise<World> {
   const tmp = tempDir();
@@ -95,7 +96,7 @@ async function world(
     }),
     store,
     now: () => clock.now,
-    idleMs: () => null,
+    idleMs: o.idleMs ?? (() => null),
     sleep: async () => {},
     ...(o.runHook ? { runHook: o.runHook } : {}),
     log: (s) => logs.push(s),
@@ -307,15 +308,22 @@ describe("notices and answers", () => {
     await bind(w);
   });
 
-  it("opens a topic per pane: the first notice is its root with the dialog's buttons, later ones reply in it", async () => {
+  it("opens a topic per pane: its root says which pane, the notices with the dialog's buttons reply in it", async () => {
+    w.herdr.workspaces = [{ workspace_id: "w1", label: "work" }];
+    w.herdr.tabs = [{ tab_id: "w1:t1", workspace_id: "w1", number: 1, label: "api" }];
     const from = w.aio.delivered.length;
-    await blockedNotice(w);
-    const [first] = w.aio.since(from);
-    expect(first?.route).toEqual({ channel: "lark-bot", account: ACCOUNT, conversationId: WORKBENCH });
+    w.herdr.agents = [agent("working", { workspace_id: "w1", tab_id: "w1:t1" })];
+    w.herdr.screens.set("w1:p1", DIALOG);
+    await w.bridge.tick();
+    await run(w, 64, "blocked");
+    const [root, first] = w.aio.since(from);
+    expect(root?.route).toEqual({ channel: "lark-bot", account: ACCOUNT, conversationId: WORKBENCH });
+    expect(root?.message.text).toMatch(/^\*\*my-mac · work · api · ledger · Codex\*\*\n/);
     expect(first?.message.text).toContain("**my-mac · ledger · Codex is waiting for you**");
     expect(first?.message.text).toContain("❯ 1. Yes");
     const t = w.store.state.threads[0];
     expect(t).toMatchObject({ paneId: "w1:p1", terminalId: "term_1", chatId: WORKBENCH, workbench: true });
+    expect(first?.route).toMatchObject({ replyToMessageId: t?.rootMessageId, threadId: expect.any(String) });
     expect(first?.message.actions).toEqual([
       { id: `herdr:key:${t?.id}:1`, label: "1 Yes" },
       { id: `herdr:key:${t?.id}:2`, label: "2 No, and tell Code…" },
@@ -450,7 +458,7 @@ describe("notices and answers", () => {
     await send(w, { chat: WORKBENCH, action: { actionId: `herdr:key:${t?.id}:1`, messageId: t?.rootMessageId ?? "" } });
     expect(w.herdr.actions).toEqual([["agent.send_keys", { target: "w1:p1", keys: ["1"] }]]);
     expect(w.aio.delivered.at(-1)).toMatchObject({
-      route: { conversationId: WORKBENCH, threadId: "topic", replyToMessageId: t?.rootMessageId },
+      route: { conversationId: WORKBENCH, threadId: t?.threadId, replyToMessageId: t?.rootMessageId },
       message: { text: "Pressed 1." },
     });
     await send(w, {
@@ -540,13 +548,34 @@ describe("notices and answers", () => {
     });
     expect(w.aio.delivered.at(-1)?.message.text).toBe("This agent is gone; not sent.");
     expect(w.herdr.actions).toEqual([]);
-    // A new agent in the same pane gets a new topic.
-    w.herdr.agents = [agent("working", { terminal_id: "term_2" })];
-    w.herdr.screens.set("w1:p1", DIALOG);
+    // A new agent in a new pane gets a new topic.
+    w.herdr.agents = [agent("working", { pane_id: "w1:p2", terminal_id: "term_2" })];
+    w.herdr.screens.set("w1:p2", DIALOG);
     await run(w, 2);
+    const from = w.aio.delivered.length;
     await run(w, 64, "blocked");
     expect(w.store.state.threads.filter((x) => x.closedAt === null)).toHaveLength(1);
-    expect(w.aio.delivered.at(-1)?.route).toEqual({ channel: "lark-bot", account: ACCOUNT, conversationId: WORKBENCH });
+    expect(w.aio.since(from)[0]?.route).toEqual({ channel: "lark-bot", account: ACCOUNT, conversationId: WORKBENCH });
+  });
+
+  it("keeps a pane's topic while its agent quits and another starts there: a line between them", async () => {
+    await blockedNotice(w);
+    const t = w.store.state.threads[0];
+    // The agent quits; the pane (a shell now) stays.
+    w.herdr.agents = [{ ...agent("idle"), agent: null }];
+    await run(w, 4);
+    expect(w.store.thread(t?.id ?? "")?.closedAt).toBeNull();
+    // Another agent in the same pane: the same topic, a line first.
+    w.herdr.agents = [agent("working", { terminal_id: "term_2", agent: "claude" })];
+    await run(w, 2);
+    const from = w.aio.delivered.length;
+    await run(w, 64, "blocked");
+    const [line, notice] = w.aio.since(from);
+    expect(line?.message.text).toContain("a new agent in this pane: Claude");
+    expect(line?.route).toMatchObject({ replyToMessageId: t?.rootMessageId });
+    expect(notice?.route).toMatchObject({ replyToMessageId: t?.rootMessageId });
+    expect(w.store.state.threads).toHaveLength(1);
+    expect(w.store.thread(t?.id ?? "")).toMatchObject({ terminalId: "term_2", agent: "Claude" });
   });
 
   it("answers status, help, pause and resume", async () => {
@@ -601,7 +630,8 @@ describe("notices and answers", () => {
     w.client.start();
     expect(await w.client.waitOnline(3000)).toBe(true);
     await run(w, 12);
-    expect(w.aio.delivered.length).toBe(n + 1);
+    // The topic's root, then the notice in it.
+    expect(w.aio.delivered.length).toBe(n + 2);
     expect(w.aio.delivered.at(-1)?.message.text).toContain("is waiting for you");
   });
 
@@ -823,8 +853,8 @@ describe("notices from the transcript", () => {
     const from = w.aio.delivered.length;
     await run(w, 34, "done");
     const sent = w.aio.since(from);
-    expect(sent.length).toBe(2);
-    const [main, rest] = sent;
+    expect(sent.length).toBe(3);
+    const [, main, rest] = sent;
     expect(main?.message.text).toMatch(/^\*\*my-mac · ledger · Codex finished\*\*/);
     expect(main?.message.text).toContain("Asked: fix the parser");
     expect(main?.message.text).toContain("Line 0 of the answer");
@@ -852,6 +882,7 @@ describe("live cards", () => {
     w = await world({
       transcripts: { turn: async () => structuredClone(turn) },
       aioFeatures: ["host.takeover", "deliver.update"],
+      config: { notify: { liveAfterSec: 60 } },
     });
     await bind(w);
   });
@@ -863,7 +894,7 @@ describe("live cards", () => {
     expect(w.store.state.live).toHaveLength(0);
     const from = w.aio.delivered.length;
     await run(w, 4, "working");
-    const [card] = w.aio.since(from);
+    const [root, card] = w.aio.since(from);
     expect(card?.message.progress).toMatchObject({
       status: "running",
       steps: [{ kind: "tool", itemId: "t1", type: "command", title: "Bash: npm test", status: "running" }],
@@ -872,7 +903,8 @@ describe("live cards", () => {
     expect(card?.route).toMatchObject({ conversationId: WORKBENCH });
     expect(w.store.state.live).toHaveLength(1);
     const t = w.store.state.threads[0];
-    expect(t?.rootMessageId).toBe(w.store.state.live[0]?.messageId);
+    expect(root?.message.text).toMatch(/^\*\*my-mac · .* · ledger · Codex\*\*/);
+    expect(card?.route).toMatchObject({ replyToMessageId: t?.rootMessageId });
 
     // The tool finishes and the agent says something: the card follows.
     turn.steps[0] = { kind: "tool", id: "t1", name: "Bash", subject: "npm test", result: "2 failed", error: true };
@@ -889,7 +921,7 @@ describe("live cards", () => {
     await run(w, 100, "working");
     expect(w.aio.updates).toHaveLength(n);
 
-    // Done: settled with the answer, then the done notice in its topic points at it.
+    // Done: settled with the answer; the card is the turn's only message (no done notice after it).
     turn.answer = "Fixed: the parser skipped empty lines.";
     // A stop counts as the same stretch for doneSettleMs (it may start again): settled with the done notice.
     await run(w, 2, "done");
@@ -902,12 +934,28 @@ describe("live cards", () => {
       answerFinal: true,
       answer: expect.stringContaining("Fixed: the parser skipped empty lines."),
     });
+    expect(w.aio.updateMessage(fin).sections?.[0]?.text).toMatch(/Codex finished\*\* \(this turn: \d+ min\)/);
     expect(w.store.state.live).toHaveLength(0);
-    const notice = w.aio.delivered.at(-1);
-    expect(notice?.message.text).toMatch(
-      /finished\*\* \(this turn: \d+ min\)\nThe whole answer and the process are in the card above\./,
-    );
-    expect(notice?.route).toMatchObject({ replyToMessageId: t?.rootMessageId });
+    expect(w.aio.delivered.at(-1)?.message.progress).toBeTruthy();
+    expect(w.aio.delivered.some((d) => /card above/.test(d.message.text))).toBe(false);
+  });
+
+  it("opens no card while the owner looks at the pane, and none before three minutes by default", async () => {
+    await w.done();
+    w = await world({
+      transcripts: { turn: async () => structuredClone(turn) },
+      aioFeatures: ["host.takeover", "deliver.update"],
+      idleMs: () => 1000,
+    });
+    await bind(w);
+    w.herdr.agents = [agent("working", { focused: true })];
+    await w.bridge.tick();
+    await run(w, 240, "working");
+    expect(w.store.state.live).toHaveLength(0);
+    w.herdr.agents = [agent("working")];
+    await run(w, 2);
+    expect(w.store.state.live).toHaveLength(1);
+    expect(w.cfg.live?.afterMs).toBe(180_000);
   });
 
   it("after a restart, carries on the card of a pane that still works instead of opening another", async () => {

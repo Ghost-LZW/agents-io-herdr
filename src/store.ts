@@ -197,8 +197,9 @@ export class Store {
   }
 
   /** The open thread of a pane in a chat. */
-  openThread(paneKey: string, chatId: string): Thread | null {
-    return this.state.threads.find((t) => t.paneKey === paneKey && t.chatId === chatId && t.closedAt === null) ?? null;
+  /** A pane's open thread in a chat: one per pane, whatever runs in it (a new program is a line in it). */
+  openThread(paneId: string, chatId: string): Thread | null {
+    return this.state.threads.find((t) => t.paneId === paneId && t.chatId === chatId && t.closedAt === null) ?? null;
   }
 
   prune(now: number): void {

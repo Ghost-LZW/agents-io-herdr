@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-**Your coding agents, reachable from Feishu/Lark.** When a coding agent (Claude Code, Codex, …) in a [herdr](https://herdr.dev) pane is waiting for you or has finished a long turn, a bot tells you on Feishu/Lark — one topic per agent in a workbench group — and what you reply in that topic is typed into that agent. Built on [agents-io](https://github.com/Ghost-LZW/agents-io).
+**Your coding agents, reachable from Feishu/Lark.** When a coding agent (Claude Code, Codex, …) in a [herdr](https://herdr.dev) pane is waiting for you or has finished a long turn, a bot tells you on Feishu/Lark — one topic per pane in a workbench group — and what you reply in that topic is typed into that agent. Built on [agents-io](https://github.com/Ghost-LZW/agents-io).
 
 No model is involved anywhere: when to notify is a handful of rules, routing is a deterministic agents-io binding table, the rest is code.
 
@@ -36,18 +36,18 @@ The bridge talks to its daemon only over the agents-io host protocol (JSONL on a
 
 **What a notice says:** the machine, the project directory (last path component only), the agent, the terminal title, and what you asked. For a finished turn: **the whole answer**, then the whole process folded under "Process: N steps, M tool calls" — what the agent said between steps, its thinking when the model wrote it down, and every tool call (command, file, pattern) with the start of its output. For a dialog: the dialog from the screen, its numbered choices as buttons plus Esc, and the process so far. What one card cannot hold follows in the same topic (in the DM: as replies), up to 10 more messages; when even that is too little, the oldest steps are left out and a line says so. All of it is redacted.
 
-**While it works:** a turn that has worked for a minute gets a live card in its topic: Feishu's thinking bubble shows each step as it happens (thinking, what the agent says, every tool call and its result), updated every few seconds from the transcript. When the turn ends the card is settled with the answer, and the done notice points at it. Not during quiet hours, not while you are looking at the pane, and only with an agents-io daemon that can edit what it sent (`deliver.update`).
+**While it works:** a turn that has worked for three minutes gets a live card in its topic: Feishu's thinking bubble shows each step as it happens (thinking, what the agent says, every tool call and its result), updated every few seconds from the transcript. When the turn ends the card is settled with the answer and becomes the turn's only message: no separate done notice (one goes out only when the card cannot be edited). Not during quiet hours, not while you are looking at the pane, and only with an agents-io daemon that can edit what it sent (`deliver.update`).
 
 This comes from the transcript the agent writes itself (Claude Code: `~/.claude/projects/…/<session>.jsonl`; Codex: `~/.codex/sessions/…/rollout-…-<session>.jsonl`), which herdr names for each pane; only its last 8 MB is read. When there is none (another agent, a session not yet written), the notice shows the end of the pane's output instead: Claude Code's side panel and input box and Codex's footer cut away, Claude Code's recap line and the head of the last message for a finished turn.
 
-**Where:** a workbench group (you and the bot) that the bridge creates when you bind yourself; each herdr pane gets its own topic. Without a workbench, notices go to your DM with the bot.
+**Where:** a workbench group (you and the bot) that the bridge creates when you bind yourself; each herdr pane gets its own topic, opened by a line naming the machine, workspace, tab, directory and agent. The topic lasts as long as the pane: when another agent starts in it, a line says so and the topic goes on; when the pane closes, the topic says it ended. Without a workbench, notices go to your DM with the bot.
 
 **Answering from Feishu:**
 
 - reply in an agent's topic (in the DM: quote-reply its notice) → typed into that agent (`agent.prompt`);
 - a button → that key in the dialog (`agent.send_keys`, digits and Esc);
 - while a dialog is open nothing is typed: the bot says so and offers the buttons again;
-- the bridge checks that the pane still runs the same program (herdr's `terminal_id`); when the agent is gone, its topic says so;
+- text goes to whatever agent the pane runs now; a dialog's buttons only press keys in the program that showed it (herdr's `terminal_id`); when the pane is gone, its topic says so;
 - only the bound owner can drive anything; anyone else gets a polite refusal, other bots are ignored;
 - every answer is short and in place: "Sent.", "Pressed 1.", or why not.
 
@@ -185,7 +185,7 @@ prints a one-time code (valid 15 minutes, 5 tries). Send it to the bot in a dire
 | `notify.quiet` | `23:00-08:00` | Quiet hours, or `off` |
 | `notify.quietBlocked` | false | Also hold blocked notices during quiet hours |
 | `notify.live` | true | A live card for long turns (needs an agents-io daemon with `deliver.update`) |
-| `notify.liveAfterSec` | 60 | How long a turn works before its live card appears |
+| `notify.liveAfterSec` | 180 | How long a turn works before its live card appears (never while you look at the pane) |
 | `notify.liveEverySec` | 5 | How often the live card follows the transcript (at least 2) |
 | `channels` | — | More agents-io channel entries for the project's daemon, as written |
 | `secrets` | — | `NAME: "keychain:…" \| "env:…"`: set in the daemon's environment, for the `env:NAME` values of `channels` |

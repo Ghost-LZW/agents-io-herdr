@@ -322,7 +322,7 @@ export function resolveConfig(
   const workbench = obj(raw.workbench, "workbench");
   const live = bool(notify.live, "notify.live", true)
     ? {
-        afterMs: seconds(notify.liveAfterSec, "notify.liveAfterSec", 60_000),
+        afterMs: seconds(notify.liveAfterSec, "notify.liveAfterSec", 180_000),
         everyMs: Math.max(2000, seconds(notify.liveEverySec, "notify.liveEverySec", 5000)),
       }
     : null;

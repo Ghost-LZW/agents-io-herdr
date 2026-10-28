@@ -40,6 +40,8 @@ export interface Strings {
   waitingChoiceNoOptions: string;
   gone: string;
   ended: string;
+  topicRoot: (machine: string, workspace: string, tab: string, dir: string, agent: string) => string;
+  agentChanged: (agent: string) => string;
   paused: string;
   herdrDown: (reason: string) => string;
   textOnly: string;
@@ -131,6 +133,9 @@ const zh: Strings = {
   waitingChoiceNoOptions: "它在等你在电脑上选，没有送到。",
   gone: "这个 agent 已经不在了，没有送到。",
   ended: "这个 agent 已经结束。",
+  topicRoot: (machine, workspace, tab, dir, agent) =>
+    `**${machine} · ${workspace} · ${tab} · ${dir} · ${agent}**\n在这个话题里回复，就是对它说话。`,
+  agentChanged: (agent) => `—— 这个窗格换了一个 agent：${agent} ——`,
   paused: "已暂停（agents-io-herdr resume 恢复），没有送到。",
   herdrDown: (reason) => `herdr 没有响应，没有送到（${reason}）。`,
   textOnly: "只能送文字，这条没有送出。",
@@ -258,6 +263,9 @@ const en: Strings = {
   waitingChoiceNoOptions: "It is waiting for a choice on the computer; not sent.",
   gone: "This agent is gone; not sent.",
   ended: "This agent has ended.",
+  topicRoot: (machine, workspace, tab, dir, agent) =>
+    `**${machine} · ${workspace} · ${tab} · ${dir} · ${agent}**\nReply in this topic to talk to it.`,
+  agentChanged: (agent) => `—— a new agent in this pane: ${agent} ——`,
   paused: "Paused (agents-io-herdr resume); not sent.",
   herdrDown: (reason) => `herdr is not answering; not sent (${reason}).`,
   textOnly: "Only text can be sent; this was not.",
