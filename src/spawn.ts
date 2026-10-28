@@ -167,6 +167,9 @@ export function firstPrompt(
     `message: ${env.id}`,
     env.parentMessageId ? `replying to message: ${env.parentMessageId}` : "",
     `sent: ${new Date(env.sentAt ?? now).toISOString()}`,
+    // Where this agent answers: the topic it is in, or the one its trigger opens. Given as a route key
+    // so a progress note it sends itself (send_message) lands there too, not in the chat.
+    `your topic (route key for send_message; your final answer goes here anyway): ${env.channel}:${env.account}:${env.conversation.id}:${env.conversation.threadId ?? env.id}`,
   ].filter(Boolean);
   const q = quotes(env.content).map(
     (x) => `> ${x.text.replace(/\n/g, "\n> ")}${x.fromMessageId ? `\n(quoted message ${x.fromMessageId})` : ""}`,
