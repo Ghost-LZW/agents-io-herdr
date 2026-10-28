@@ -142,7 +142,7 @@ export function historyText(messages: InboundEnvelope[], blobDir: string | null,
   if (!messages.length) return "";
   const shown = messages.slice(-max);
   const lines = shown.map((m) => {
-    const who = m.sender.displayName ?? m.sender.channelUserId;
+    const who = `${m.sender.displayName ?? m.sender.channelUserId}${m.sender.isBot ? " (bot)" : ""}`;
     const when = m.sentAt !== undefined ? new Date(m.sentAt).toISOString().slice(0, 16).replace("T", " ") : "";
     const body = [text(m.content), ...attachments(m.content, blobDir)].filter(Boolean).join(" ");
     return `- ${when ? `${when} ` : ""}${who}: ${body.replace(/\n/g, " ")}`;
