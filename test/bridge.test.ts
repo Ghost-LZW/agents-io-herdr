@@ -1067,6 +1067,9 @@ describe("agents started from a message (spawn)", () => {
     expect(prompt).toContain("Read the place with the skill, then answer.");
     expect(prompt).toContain("conversation: g_1");
     expect(prompt).toContain("topic (thread root message): m0");
+    expect(prompt).toContain(
+      `your topic (route key for send_message; your final answer goes here anyway): ${SIDE}:me:g_1:m0`,
+    );
     expect(prompt).toContain("> the release slipped");
     expect(prompt).toContain("what is this about?");
     // A progress message in the topic, and the chat is now routed to the host too.
