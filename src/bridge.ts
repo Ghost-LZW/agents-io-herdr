@@ -846,7 +846,9 @@ export class Bridge {
       return this.#spawn(rule, t.item);
     }
     const target =
-      spawnedFor(st.spawned, item, repliedTo(item)) ?? (env.conversation.kind === "dm" ? this.#latestIn(item) : null);
+      // Only the agent's topic, or a reply to one of its messages: in a direct chat (a chat with oneself
+      // too) the rest is the owner's own notes, not for any agent.
+      spawnedFor(st.spawned, item, repliedTo(item));
     if (!target) return;
     const text = laterPrompt(item, this.#blobDir());
     if (!text) return;
@@ -933,22 +935,6 @@ export class Bridge {
   /** The daemon's blob store, where channel images and files are kept (agents open them from there). */
   #blobDir(): string {
     return join(this.#c.paths.aioDataDir, "blobs");
-  }
-
-  /** In a direct conversation without topics: the newest agent running there. */
-  #latestIn(item: InboundItem): Spawned | null {
-    const env = item.envelope;
-    return (
-      this.store.state.spawned
-        .filter(
-          (x) =>
-            x.closedAt === null &&
-            x.channel === env.channel &&
-            x.account === env.account &&
-            x.conversationId === env.conversation.id,
-        )
-        .at(-1) ?? null
-    );
   }
 
   /** The owner's `/close`: the agent's tab closes, its turn (if any) settles, the chat is not routed for it any more. */
