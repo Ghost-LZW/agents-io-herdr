@@ -1362,11 +1362,11 @@ describe("agents started from a message (spawn)", () => {
     expect(w.herdr.actions.at(-1)).toEqual(["agent.send_keys", { target: pane, keys: ["1"] }]);
   });
 
-  it("in a direct chat that addresses everything, only the rule's trigger starts an agent; the rest goes to it", async () => {
+  it("in a direct chat that addresses everything, only the trigger starts an agent; only its topic reaches it", async () => {
     w.cfg.spawn[0] = { ...(w.cfg.spawn[0] as SpawnRule), trigger: "/go" };
-    const dm = (id: string, text: string) => {
+    const dm = (id: string, text: string, topic?: string) => {
       const it = side({ id, text, trigger: true, chat: "self" });
-      it.envelope.conversation = { id: "self", kind: "dm" };
+      it.envelope.conversation = { id: "self", kind: "dm", ...(topic ? { threadId: topic } : {}) };
       return it;
     };
     await sendItem(w, dm("d1", "just a note to myself"));
@@ -1376,7 +1376,12 @@ describe("agents started from a message (spawn)", () => {
     expect(String(w.herdr.calls.findLast(([m]) => m === "agent.prompt")?.[1].text)).toMatch(
       /What they asked:\nsum up my day$/,
     );
-    await sendItem(w, dm("d3", "only the morning"));
+    // A note to oneself outside the agent's topic is not for it.
+    const typed = w.herdr.actions.length;
+    await sendItem(w, dm("d3", "buy milk"));
+    expect(w.herdr.actions).toHaveLength(typed);
+    // In the topic the trigger opened, it is.
+    await sendItem(w, dm("d4", "only the morning", "d2"));
     expect(w.store.state.spawned).toHaveLength(1);
     expect(w.herdr.actions.at(-1)).toEqual([
       "agent.prompt",
