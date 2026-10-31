@@ -43,13 +43,12 @@ import {
   ACTION_PREFIX,
   agentName,
   answerPages,
-  buttons,
   fence,
   KEY_ACTION,
-  keyLabel,
   liveMessage,
   noticeMessages,
   placeOf,
+  processMessage,
   quietLabel,
   statusMessage,
 } from "./notice.ts";
@@ -76,7 +75,7 @@ import type {
   ReplyRoute,
 } from "./protocol.ts";
 import { redact } from "./redact.ts";
-import { type DialogOption, optionsOf, summaryOf, tailOf } from "./screen.ts";
+import { type DialogOption, dialogOf, optionsOf, summaryOf, tailOf } from "./screen.ts";
 import { lookup, realSecretSource, type SecretSource } from "./secrets.ts";
 import {
   agentLabel,
@@ -111,6 +110,7 @@ import {
   writePrivate,
 } from "./store.ts";
 import { minuteOfDay } from "./system.ts";
+import { PROCESS_ACTION } from "./terminal-controls.ts";
 import type { TranscriptSource, Turn } from "./transcript.ts";
 import { inQuiet, type Notice, type PaneView, paneKey, Watcher } from "./watch.ts";
 
@@ -429,7 +429,7 @@ export class Bridge {
       try {
         // A dialog is at the bottom; a finished turn's conclusion is at the start of its last message.
         const raw = await readAgent(this.#o.herdr, n.agent.pane_id, n.kind === "done" ? DONE_READ_LINES : READ_LINES);
-        screen = n.kind === "done" ? summaryOf(raw, SCREEN_LINES) : tailOf(raw, SCREEN_LINES);
+        screen = n.kind === "done" ? summaryOf(raw, SCREEN_LINES) : dialogOf(raw, READ_LINES);
         if (n.kind === "blocked") options = optionsOf(screen);
       } catch (e) {
         this.#log(`reading ${n.agent.pane_id} failed: ${(e as Error).message}`);
@@ -1732,26 +1732,20 @@ export class Bridge {
     return { ok: true, agent: a };
   }
 
-  /** The dialog's choices as the pane shows them now (else the last ones seen). */
-  async #currentOptions(t: Thread): Promise<DialogOption[]> {
-    try {
-      const fresh = optionsOf(tailOf(await readAgent(this.#o.herdr, t.paneId, READ_LINES), SCREEN_LINES));
-      if (fresh.length) {
-        t.options = fresh;
-        this.store.save();
-      }
-    } catch {
-      // The stored ones then.
-    }
-    return t.options;
-  }
-
   async #waitingForChoice(t: Thread, route: ReplyRoute, op: string): Promise<void> {
-    const options = await this.#currentOptions(t);
-    const msg: RenderedMessage = options.length
-      ? { text: this.#s.waitingChoice, actions: buttons(t.id, options, this.#s) }
-      : { text: this.#s.waitingChoiceNoOptions };
-    await this.#say(t, route, msg, op);
+    const pane = await this.#paneOf(t);
+    if (!pane.ok) return this.#say(t, route, { text: pane.gone ? this.#s.gone : this.#s.herdrDown(pane.reason) }, op);
+    return this.#showPane(
+      pane.agent,
+      pane.agent.pane_id,
+      VIEW_LINES,
+      {
+        topic: t.workbench,
+        send: (msg) => this.#say(t, route, msg, op),
+        done: (text) => this.#say(t, route, { text }, op),
+      },
+      this.#s.paneWaiting,
+    );
   }
 
   /** A message in a pane's thread: the owner's text goes to the agent; anyone else is told no. */
@@ -1800,11 +1794,11 @@ export class Bridge {
   }
 
   async #onAction(item: InboundItem, actionId: string, messageId: string | null): Promise<void> {
-    if (VIEW_ACTION.test(actionId) || PANE_KEY_ACTION.test(actionId)) return this.#onPaneAction(item, actionId);
+    if (VIEW_ACTION.test(actionId) || PANE_KEY_ACTION.test(actionId) || PROCESS_ACTION.test(actionId))
+      return this.#onPaneAction(item, actionId);
     const m = KEY_ACTION.exec(actionId);
     if (!m) return;
     const t = this.store.thread(m[1] as string);
-    const key = m[2] as string;
     if (!t) return this.#log(`button for an unknown thread ${m[1]}`);
     // The same chat: a card forwarded elsewhere presses nothing.
     if (item.envelope.conversation.id !== t.chatId) return this.#log(`button of thread ${t.id} from another chat`);
@@ -1817,15 +1811,9 @@ export class Bridge {
     if (this.paused) return say(s.paused);
     const pane = await this.#paneOf(t, true);
     if (!pane.ok) return say(pane.gone ? s.gone : s.herdrDown(pane.reason));
-    try {
-      await sendKeys(this.#o.herdr, t.paneId, [key]);
-    } catch (e) {
-      const code = e instanceof HerdrError ? e.code : "error";
-      this.#log(`keys to ${t.paneId} failed: ${code}`);
-      return say(s.failed(code));
-    }
-    this.#log(`keys to ${t.paneId}: ${key}`);
-    return say(s.pressed(keyLabel(key)));
+    // Legacy thread-only cards cannot prove which program they belonged to. Replace them with
+    // current terminal-bound controls; a later click is the owner's explicit key press.
+    return this.#waitingForChoice(t, here, op);
   }
 
   // -- looking at and driving any pane
@@ -1879,7 +1867,7 @@ export class Bridge {
    * `/ls`, `/view`, `/send`, `/keys`. `scope`: the pane of the topic or screen card the command came in
    * (it must still run the same program); else the command names its pane.
    */
-  async #paneCommand(pc: PaneCommand, scope: PaneRef | null, reply: PaneReply): Promise<void> {
+  async #paneCommand(pc: PaneCommand, scope: PaneRef | null, reply: PaneReply, refreshAfterKey = false): Promise<void> {
     const s = this.#s;
     const say = (text: string, about: HerdrAgent | null = null) => reply.send({ text }, about);
     if (pc.cmd === "usage") return say(s.paneUsage);
@@ -1905,13 +1893,22 @@ export class Bridge {
       }
       pane = r.pane;
     }
-    const id = shortId(pane.pane_id, panes);
+    const id = pane.pane_id;
+    if (pc.cmd === "process") return this.#showProcess(pane, 0, reply);
     if (pc.cmd === "view") return this.#showPane(pane, id, pc.lines ?? VIEW_LINES, reply);
     if (this.paused) return say(s.paused);
     try {
       if (pc.cmd === "keys") {
         await sendPaneKeys(this.#o.herdr, pane.pane_id, pc.keys);
         this.#log(`keys to ${pane.pane_id}: ${pc.keys.length}`);
+        if (refreshAfterKey) {
+          await (this.#o.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(150);
+          return this.#paneCommand(
+            { cmd: "view", ref: null, lines: null },
+            { paneId: pane.pane_id, terminalId: pane.terminal_id },
+            reply,
+          );
+        }
         return reply.done(s.paneKeysSent(id, pc.keys.join(" ")), pane);
       }
       if (!pc.text) return say(s.textOnly);
@@ -1937,7 +1934,8 @@ export class Bridge {
   async #showPane(pane: HerdrAgent, id: string, lines: number, reply: PaneReply, note?: string): Promise<void> {
     let screen: string;
     try {
-      screen = tailOf(await readPane(this.#o.herdr, pane.pane_id, lines + 20), lines);
+      const raw = await readPane(this.#o.herdr, pane.pane_id, lines + 20);
+      screen = pane.agent_status === "blocked" ? dialogOf(raw, lines) : tailOf(raw, lines);
     } catch (e) {
       return reply.send({ text: this.#s.herdrDown(e instanceof HerdrError ? e.code : (e as Error).message) }, null);
     }
@@ -1955,6 +1953,16 @@ export class Bridge {
     return reply.send(note ? { ...msg, text: `${note}\n${msg.text}` } : msg, pane);
   }
 
+  async #showProcess(pane: HerdrAgent, page: number, reply: PaneReply): Promise<void> {
+    let turn: Turn | null = null;
+    try {
+      turn = (await this.#o.transcripts?.turn(pane)) ?? null;
+    } catch {
+      this.#log(`process of ${pane.pane_id} could not be read`);
+    }
+    return reply.send(processMessage(pane, turn, page, this.#s), pane);
+  }
+
   /** A screen card's buttons: refresh it, or press a dialog's key in that terminal. */
   async #onPaneAction(item: InboundItem, actionId: string): Promise<void> {
     const env = item.envelope;
@@ -1966,7 +1974,8 @@ export class Bridge {
     const reply = t ? this.#threadReply(item, t, messageId) : this.#plainReply(item);
     const view = VIEW_ACTION.exec(actionId);
     const key = PANE_KEY_ACTION.exec(actionId);
-    const terminalId = (view?.[1] ?? key?.[1]) as string;
+    const process = PROCESS_ACTION.exec(actionId);
+    const terminalId = (view?.[1] ?? key?.[1] ?? process?.[1]) as string;
     let panes: HerdrAgent[];
     try {
       panes = await listPanes(this.#o.herdr);
@@ -1976,7 +1985,8 @@ export class Bridge {
     const pane = panes.find((p) => p.terminal_id === terminalId);
     if (!pane) return reply.send({ text: this.#s.gone }, null);
     const scope = { paneId: pane.pane_id, terminalId };
+    if (process) return this.#showProcess(pane, Number(process[2]), reply);
     if (view) return this.#paneCommand({ cmd: "view", ref: null, lines: null }, scope, reply);
-    return this.#paneCommand({ cmd: "keys", ref: null, keys: [key?.[2] as string] }, scope, reply);
+    return this.#paneCommand({ cmd: "keys", ref: null, keys: [key?.[2] as string] }, scope, reply, true);
   }
 }

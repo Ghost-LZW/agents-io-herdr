@@ -59,6 +59,7 @@ async function world(
     aioFeatures?: string[];
     runHook?: HookRunner;
     idleMs?: () => number | null;
+    sleep?: (ms: number) => Promise<void>;
   } = {},
 ): Promise<World> {
   const tmp = tempDir();
@@ -97,7 +98,7 @@ async function world(
     store,
     now: () => clock.now,
     idleMs: o.idleMs ?? (() => null),
-    sleep: async () => {},
+    sleep: o.sleep ?? (async () => {}),
     ...(o.runHook ? { runHook: o.runHook } : {}),
     log: (s) => logs.push(s),
     ...(o.transcripts ? { transcripts: o.transcripts } : {}),
@@ -320,14 +321,14 @@ describe("notices and answers", () => {
     expect(root?.route).toEqual({ channel: "lark-bot", account: ACCOUNT, conversationId: WORKBENCH });
     expect(root?.message.text).toMatch(/^\*\*my-mac · work · api · ledger · Codex\*\*\n/);
     expect(first?.message.text).toContain("**my-mac · ledger · Codex is waiting for you**");
-    expect(first?.message.text).toContain("❯ 1. Yes");
+    expect(first?.message.text).toContain("❯ 1\\. Yes");
     const t = w.store.state.threads[0];
     expect(t).toMatchObject({ paneId: "w1:p1", terminalId: "term_1", chatId: WORKBENCH, workbench: true });
     expect(first?.route).toMatchObject({ replyToMessageId: t?.rootMessageId, threadId: expect.any(String) });
-    expect(first?.message.actions).toEqual([
-      { id: `herdr:key:${t?.id}:1`, label: "1 Yes" },
-      { id: `herdr:key:${t?.id}:2`, label: "2 No, and tell Code…" },
-      { id: `herdr:key:${t?.id}:esc`, label: "Esc cancel" },
+    expect(first?.message.actions?.map((a) => a.id)).toEqual([
+      ...["1", "2", "up", "down", "left", "right", "enter", "tab", "esc"].map((k) => `herdr:pk:term_1:${k}`),
+      "herdr:view:term_1",
+      "herdr:process:term_1:0",
     ]);
     // Back to work, then a long turn finishes: into the same topic.
     await run(w, 4, "working");
@@ -345,7 +346,7 @@ describe("notices and answers", () => {
     w.herdr.visibleOnly.add("w1:p1");
     await blockedNotice(w);
     const n = w.aio.delivered.at(-1);
-    expect(n?.message.text).toContain("❯ 1. Yes");
+    expect(n?.message.text).toContain("❯ 1\\. Yes");
     expect(n?.message.actions?.[0]).toMatchObject({ label: "1 Yes" });
     const reads = w.herdr.calls.filter(([m]) => m === "agent.read").map(([, p]) => p.source);
     expect(reads).toEqual(["recent_unwrapped", "visible"]);
@@ -433,12 +434,8 @@ describe("notices and answers", () => {
     });
     expect(w.herdr.actions).toEqual([]);
     const said = w.aio.delivered.at(-1);
-    expect(said?.message.text).toBe("It is waiting for a choice; not sent. Pick one:");
-    expect(said?.message.actions?.map((a) => a.id)).toEqual([
-      `herdr:key:${t?.id}:1`,
-      `herdr:key:${t?.id}:2`,
-      `herdr:key:${t?.id}:esc`,
-    ]);
+    expect(said?.message.text).toMatch(/^It is waiting for a choice; not sent/);
+    expect(said?.message.actions?.map((a) => a.id)).toContain("herdr:pk:term_1:enter");
     // herdr refusing the prompt (a dialog opened in between) ends the same way.
     w.herdr.agents = [agent("idle")];
     w.herdr.errors.set("agent.prompt", "agent_blocked");
@@ -449,36 +446,36 @@ describe("notices and answers", () => {
       rootMessageId: t?.rootMessageId,
       text: "yes",
     });
-    expect(w.aio.delivered.at(-1)?.message.text).toBe("It is waiting for a choice; not sent. Pick one:");
+    expect(w.aio.delivered.at(-1)?.message.text).toMatch(/^It is waiting for a choice; not sent/);
   });
 
   it("presses a dialog's key for the owner, in the same terminal only", async () => {
     await blockedNotice(w);
     const t = w.store.state.threads[0];
-    await send(w, { chat: WORKBENCH, action: { actionId: `herdr:key:${t?.id}:1`, messageId: t?.rootMessageId ?? "" } });
-    expect(w.herdr.actions).toEqual([["agent.send_keys", { target: "w1:p1", keys: ["1"] }]]);
+    await send(w, { chat: WORKBENCH, action: { actionId: `herdr:pk:term_1:1`, messageId: t?.rootMessageId ?? "" } });
+    expect(w.herdr.actions).toEqual([["pane.send_keys", { pane_id: "w1:p1", keys: ["1"] }]]);
     expect(w.aio.delivered.at(-1)).toMatchObject({
       route: { conversationId: WORKBENCH, threadId: t?.threadId, replyToMessageId: t?.rootMessageId },
-      message: { text: "Pressed 1." },
+      message: { text: expect.stringContaining("❯ 1\\. Yes") },
     });
     await send(w, {
       chat: WORKBENCH,
-      action: { actionId: `herdr:key:${t?.id}:esc`, messageId: t?.rootMessageId ?? "" },
+      action: { actionId: `herdr:pk:term_1:esc`, messageId: t?.rootMessageId ?? "" },
     });
-    expect(w.herdr.actions.at(-1)).toEqual(["agent.send_keys", { target: "w1:p1", keys: ["esc"] }]);
+    expect(w.herdr.actions.at(-1)).toEqual(["pane.send_keys", { pane_id: "w1:p1", keys: ["esc"] }]);
     // A card forwarded to another chat presses nothing; neither does a made-up key.
     await send(w, {
       chat: "oc_test_elsewhere",
-      action: { actionId: `herdr:key:${t?.id}:1`, messageId: "om_test_fwd" },
+      action: { actionId: `herdr:pk:term_1:1`, messageId: "om_test_fwd" },
     });
     await send(w, {
       chat: WORKBENCH,
-      action: { actionId: `herdr:key:${t?.id}:ctrl-c`, messageId: t?.rootMessageId ?? "" },
+      action: { actionId: `herdr:pk:term_1:ctrl-c`, messageId: t?.rootMessageId ?? "" },
     });
     expect(w.herdr.actions).toHaveLength(2);
     // The program in the pane changed: not the same agent any more.
     w.herdr.agents = [agent("blocked", { terminal_id: "term_9" })];
-    await send(w, { chat: WORKBENCH, action: { actionId: `herdr:key:${t?.id}:1`, messageId: t?.rootMessageId ?? "" } });
+    await send(w, { chat: WORKBENCH, action: { actionId: `herdr:pk:term_1:1`, messageId: t?.rootMessageId ?? "" } });
     expect(w.herdr.actions).toHaveLength(2);
     expect(w.aio.delivered.at(-1)?.message.text).toBe("This agent is gone; not sent.");
   });
@@ -727,9 +724,7 @@ describe("looking at and driving any pane", () => {
   it("shows a pane's screen by any of its names, and a reply to the card talks to that pane", async () => {
     for (const ref of ["p3", "w1:p3", "tail", "scratch"]) {
       await send(w, { chat: DM, kind: "dm", text: `/view ${ref}` });
-      expect(w.aio.delivered.at(-1)?.message.text).toBe(
-        "**my-mac · p3 · scratch · terminal**\nzsh\n```\n$ make\nok\n```",
-      );
+      expect(w.aio.delivered.at(-1)?.message.text).toBe("**my-mac · w1:p3 · scratch · terminal**\nzsh\n\n$ make\nok");
     }
     const card = w.aio.delivered.at(-1);
     expect(card?.message.actions).toEqual([{ id: "herdr:view:term_3", label: "Refresh" }]);
@@ -791,16 +786,15 @@ describe("looking at and driving any pane", () => {
     const card = w.aio.delivered.at(-1);
     expect(card?.message.text).toMatch(/^It is waiting for a choice; not sent\./);
     expect(card?.message.actions?.map((a) => a.id)).toEqual([
-      "herdr:pk:term_1:1",
-      "herdr:pk:term_1:2",
-      "herdr:pk:term_1:esc",
+      ...["1", "2", "up", "down", "left", "right", "enter", "tab", "esc"].map((k) => `herdr:pk:term_1:${k}`),
       "herdr:view:term_1",
+      "herdr:process:term_1:0",
     ]);
     await send(w, { chat: DM, action: { actionId: "herdr:pk:term_1:1", messageId: "om_test_card" } });
     expect(w.herdr.actions).toEqual([["pane.send_keys", { pane_id: "w1:p1", keys: ["1"] }]]);
     // The refresh button shows the screen again.
     await send(w, { chat: DM, action: { actionId: "herdr:view:term_1", messageId: "om_test_card" } });
-    expect(w.aio.delivered.at(-1)?.message.text).toContain("❯ 1. Yes");
+    expect(w.aio.delivered.at(-1)?.message.text).toContain("❯ 1\\. Yes");
   });
 
   it("in a pane's topic, /view shows its screen and plain text still goes to the agent", async () => {
@@ -819,7 +813,7 @@ describe("looking at and driving any pane", () => {
     await send(w, { ...topic, text: "/view 5" });
     const card = w.aio.delivered.at(-1);
     expect(card?.route).toMatchObject({ conversationId: WORKBENCH, threadId: "omt_test_topic" });
-    expect(card?.message.text).toContain("❯ 1. Yes");
+    expect(card?.message.text).toContain("❯ 1\\. Yes");
     expect(card?.message.sections?.[0]?.text).toMatch(/^Reply in this topic/);
     await send(w, { ...topic, text: "/keys esc" });
     expect(w.herdr.actions).toEqual([["pane.send_keys", { pane_id: "w1:p1", keys: ["esc"] }]]);
@@ -841,6 +835,133 @@ describe("looking at and driving any pane", () => {
     expect(w.aio.delivered.at(-1)?.message.text).toBe("Only this machine's owner can answer this agent.");
     await send(w, { chat: "oc_test_group", action: { actionId: "herdr:pk:term_3:1", messageId: "om_x" } });
     expect(w.herdr.actions).toEqual([]);
+  });
+});
+
+describe("terminal controls and JSONL process pages", () => {
+  let afterKey: (() => void) | null;
+  let turn: Turn;
+  let reads: number;
+  beforeEach(async () => {
+    afterKey = null;
+    reads = 0;
+    turn = {
+      prompt: "inspect parser",
+      steps: [
+        { kind: "thinking", text: "Visible log thinking token=sk-ant-abcdefghijklmnopqrstuvwxyz0123" },
+        { kind: "tool", id: "t1", name: "Read", subject: "src/parser.ts", result: "ok", error: false },
+      ],
+      answer: Array.from({ length: 600 }, (_, i) => `Answer line ${i} with enough text for pagination.`).join("\n"),
+      truncated: false,
+    };
+    w = await world({
+      sleep: async () => {
+        afterKey?.();
+      },
+      transcripts: {
+        turn: async () => {
+          reads++;
+          return structuredClone(turn);
+        },
+      },
+    });
+    await bind(w);
+    w.herdr.agents = [agent("blocked")];
+    w.herdr.screens.set("w1:p1", DIALOG);
+  });
+
+  it("keeps question text above twenty lines and escapes wrapping screen markup", async () => {
+    const screen = [
+      "← □ledger权限 □ledger合并 □herdr合并 ✔Submit →",
+      "Question **literal** <at id=all>",
+      ...Array.from({ length: 40 }, (_, i) => `Explanation ${i}: more question context`),
+      "Enter to select · Tab/Arrow keys to navigate · Esc to cancel",
+    ].join("\n");
+    w.herdr.screens.set("w1:p1", screen);
+    w.herdr.agents = [agent("working")];
+    await w.bridge.tick();
+    await run(w, 64, "blocked");
+    const notice = w.aio.delivered.at(-1)?.message;
+    expect(notice?.text).toContain("□ledger权限");
+    expect(notice?.text).toContain("Question \\*\\*literal\\*\\* &lt;at id=all&gt;");
+    expect(notice?.text).toContain("Tab/Arrow keys");
+    expect(notice?.text).not.toContain("```");
+    expect(notice?.actions?.some((a) => a.id === "herdr:pk:term_1:enter")).toBe(true);
+    expect(w.herdr.actions).toEqual([]);
+  });
+
+  it("presses each navigation key once and refreshes, with owner pause chat and stale guards", async () => {
+    for (const key of ["up", "down", "left", "right", "tab", "esc"]) {
+      await send(w, { chat: DM, action: { actionId: `herdr:pk:term_1:${key}`, messageId: "om_card" } });
+      expect(w.herdr.actions.at(-1)).toEqual(["pane.send_keys", { pane_id: "w1:p1", keys: [key] }]);
+      expect(w.aio.delivered.at(-1)?.message.text).toContain("Do you want to proceed?");
+    }
+    const n = w.herdr.actions.length;
+    await send(w, { from: STRANGER, chat: DM, action: { actionId: "herdr:pk:term_1:enter", messageId: "om_card" } });
+    await send(w, { chat: "oc_other", action: { actionId: "herdr:pk:term_1:enter", messageId: "om_card" } });
+    await send(w, { chat: DM, kind: "dm", text: "/pause" });
+    await send(w, { chat: DM, action: { actionId: "herdr:pk:term_1:enter", messageId: "om_card" } });
+    expect(w.aio.delivered.at(-1)?.message.text).toContain("Paused");
+    await send(w, { chat: DM, kind: "dm", text: "/resume" });
+    w.herdr.agents = [agent("blocked", { terminal_id: "term_2" })];
+    await send(w, { chat: DM, action: { actionId: "herdr:pk:term_1:enter", messageId: "om_card" } });
+    expect(w.herdr.actions).toHaveLength(n);
+  });
+
+  it("reads the new state after Enter and never follows a replacement terminal", async () => {
+    afterKey = () => {
+      w.herdr.agents = [agent("working")];
+      w.herdr.screens.set("w1:p1", "Selection submitted");
+    };
+    await send(w, { chat: DM, action: { actionId: "herdr:pk:term_1:enter", messageId: "om_card" } });
+    expect(w.herdr.actions).toEqual([["pane.send_keys", { pane_id: "w1:p1", keys: ["enter"] }]]);
+    expect(w.aio.delivered.at(-1)?.message.text).toContain("working");
+    expect(w.aio.delivered.at(-1)?.message.text).toContain("Selection submitted");
+    expect(w.aio.delivered.at(-1)?.message.actions?.some((a) => a.id.includes(":pk:"))).toBe(false);
+    w.herdr.agents = [agent("blocked")];
+    afterKey = () => {
+      w.herdr.agents = [agent("blocked", { terminal_id: "term_2" })];
+      w.herdr.screens.set("w1:p1", "replacement private screen");
+    };
+    await send(w, { chat: DM, action: { actionId: "herdr:pk:term_1:enter", messageId: "om_card" } });
+    expect(w.herdr.actions).toHaveLength(2);
+    expect(w.aio.delivered.at(-1)?.message.text).not.toContain("replacement private screen");
+  });
+
+  it("refreshes legacy thread buttons without sending a key, even after topic takeover", async () => {
+    await blockedNotice(w);
+    const t = w.store.state.threads[0];
+    if (!t) throw new Error("thread missing");
+    t.terminalId = "term_2";
+    w.herdr.agents = [agent("blocked", { terminal_id: "term_2" })];
+    await send(w, { chat: WORKBENCH, action: { actionId: `herdr:key:${t.id}:1`, messageId: t.rootMessageId } });
+    expect(w.herdr.actions).toEqual([]);
+    expect(w.aio.delivered.at(-1)?.message.actions?.[0]?.id).toBe("herdr:pk:term_2:1");
+  });
+
+  it("opens redacted process pages immediately, keeps the whole answer and rejects a stale source", async () => {
+    await send(w, { chat: DM, kind: "dm", text: "/process p1" });
+    const first = w.aio.delivered.at(-1)?.message;
+    expect(first?.text).toContain("w1:p1 · ledger · Codex");
+    expect(first?.text).toContain("Codex JSONL · latest turn");
+    expect(first?.text).toContain("Visible log thinking");
+    expect(first?.text).not.toContain("abcdefghijklmnopqrstuvwxyz0123");
+    expect(first?.text).toContain("[REDACTED]");
+    let next = first?.actions?.find((a) => a.label === "Next");
+    let pages = 1;
+    while (next && pages < 10) {
+      await send(w, { chat: DM, action: { actionId: next.id, messageId: "om_process" } });
+      pages++;
+      next = w.aio.delivered.at(-1)?.message.actions?.find((a) => a.label === "Next");
+    }
+    expect(pages).toBeGreaterThan(2);
+    expect(w.aio.delivered.at(-1)?.message.text).toContain("Answer line 599");
+    expect(w.herdr.actions).toEqual([]);
+    const before = reads;
+    w.herdr.agents = [agent("blocked", { terminal_id: "term_2" })];
+    await send(w, { chat: DM, action: { actionId: "herdr:process:term_1:0", messageId: "om_process" } });
+    expect(reads).toBe(before);
+    expect(w.aio.delivered.at(-1)?.message.text).toContain("gone");
   });
 });
 

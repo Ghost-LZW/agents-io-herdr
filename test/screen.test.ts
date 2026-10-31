@@ -4,6 +4,7 @@ import { buttons, noticeMessage, statusMessage } from "../src/notice.ts";
 import { panesMessage } from "../src/panes.ts";
 import { hideSecrets, REDACTED, redact } from "../src/redact.ts";
 import { cutSidePanel, optionsOf, summaryOf, tailOf } from "../src/screen.ts";
+import { paneButtons, screenText } from "../src/terminal-controls.ts";
 import { agent } from "./fixtures.ts";
 
 describe("screen", () => {
@@ -192,7 +193,7 @@ describe("notice cards", () => {
   const s = strings("en");
   const base = { machine: "my-mac", timeZone: "UTC", s, topic: true, threadId: "a1b2c3d4e5f6", options: [] };
 
-  it("says which machine, place and agent, with the screen in a code block and a footer", () => {
+  it("says which machine, place and agent, with wrapping screen text and terminal-bound controls", () => {
     const m = noticeMessage(
       { kind: "blocked", agent: agent("blocked") },
       {
@@ -205,13 +206,13 @@ describe("notice cards", () => {
       },
     );
     expect(m.text).toBe(
-      "**my-mac · ledger · Codex is waiting for you**\nfix the parser\n```\nAllow?\n❯ 1. Yes\n  2. No\n```",
+      "**my-mac · ledger · Codex is waiting for you**\nfix the parser\n\nAllow?\n❯ 1\\. Yes\n  2\\. No",
     );
     expect(m.sections).toEqual([{ kind: "footer", text: "w1:p1 · reply in this topic to talk to it" }]);
-    expect(m.actions).toEqual([
-      { id: "herdr:key:a1b2c3d4e5f6:1", label: "1 Yes" },
-      { id: "herdr:key:a1b2c3d4e5f6:2", label: "2 No" },
-      { id: "herdr:key:a1b2c3d4e5f6:esc", label: "Esc cancel" },
+    expect(m.actions?.map((a) => a.id)).toEqual([
+      ...["1", "2", "up", "down", "left", "right", "enter", "tab", "esc"].map((k) => `herdr:pk:term_1:${k}`),
+      "herdr:view:term_1",
+      "herdr:process:term_1:0",
     ]);
     const done = noticeMessage({ kind: "done", agent: agent("done"), turnMs: 754_000 }, { ...base, screen: "" });
     expect(done.text.split("\n")[0]).toBe("**my-mac · ledger · Codex finished** (this turn: 13 min)");
@@ -237,6 +238,23 @@ describe("notice cards", () => {
       { ...base, s: zh, timeZone: "Asia/Shanghai", screen: null },
     );
     expect(night.text).toBe("**my-mac · 夜里做完的**\n- ledger · Codex · fix the parser（1 小时 5 分钟，03:12 做完）");
+  });
+
+  it("escapes screen markup and bounds bytes without a code block", () => {
+    const text = screenText("<at id=all> **bold** [link](url) `code` token=sk-ant-abcdefghijklmnopqrstuvwxyz0123");
+    expect(text).toContain("&lt;at id=all&gt;");
+    expect(text).toContain("\\*\\*bold\\*\\*");
+    expect(text).not.toContain("sk-ant-");
+    expect(Buffer.byteLength(screenText("&中文\n".repeat(2000)))).toBeLessThan(16_010);
+    expect(paneButtons("term_1", [], s)?.map((a) => a.label)).toEqual([
+      "↑",
+      "↓",
+      "←",
+      "→",
+      "Enter",
+      "Tab",
+      "Esc cancel",
+    ]);
   });
 
   it("clips button labels", () => {
