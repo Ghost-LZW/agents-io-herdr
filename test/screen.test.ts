@@ -160,9 +160,92 @@ describe("redact", () => {
     try {
       const t = `token=abc123def456ghi ghp_${"A1b2".repeat(9)} dev@example.com`;
       expect(redact(t).text).toBe(`token=abc123def456ghi ghp_${"A1b2".repeat(9)} …@example.com`);
+      // The session collector and exec output are redacted whatever the notices say.
+      expect(redact(t, { strict: true }).text).not.toContain("abc123def456ghi");
     } finally {
       hideSecrets(true);
     }
+  });
+
+  it("hides LB / agents-io tokens, plain passwords and secret flags", () => {
+    const cases: [string, string, string][] = [
+      ["LB_TOKEN=lbp_Abc123def456ghi", `lbp_${REDACTED}`, "Abc123def456ghi"],
+      ["key agk_q1w2e3r4t5y6", `agk_${REDACTED}`, "q1w2e3r4t5y6"],
+      ["password=hunterpass", `password=${REDACTED}`, "hunterpass"],
+      ['"db_pass": "letmein"', `"db_pass": "${REDACTED}`, "letmein"],
+      ["mysql -u root --password hunterpass", `--password ${REDACTED}`, "hunterpass"],
+      ["gh auth login --with-token --token plainword", `--token ${REDACTED}`, "plainword"],
+    ];
+    for (const [input, expected, secret] of cases) {
+      const r = redact(input);
+      expect(r.text, input).toContain(expected);
+      expect(r.text, input).not.toContain(secret);
+    }
+    for (const s of ["password: false", "--password $PW", "password=<your password>", "bypass: yes-really"])
+      expect(redact(s).text, s).toBe(s);
+  });
+
+  it("hides the forms that name no key: curl -u, mysql -p, kubeconfig data, headers, URLs, netrc", () => {
+    // Base64 of a key's BEGIN line, put together at run time so no scanner takes the source for a leak.
+    const b64 = (s: string) => Buffer.from(s).toString("base64");
+    const cases: [string, string, string][] = [
+      ["curl -u someone:hunter2pw https://x.example/api", `-u someone:${REDACTED} https`, "hunter2pw"],
+      ["curl -usomeone:hunter2pw https://x", `-usomeone:${REDACTED}`, "hunter2pw"],
+      ["curl --user 'someone:hunter2pw' https://x", `--user 'someone:${REDACTED}'`, "hunter2pw"],
+      ["curl --user=someone:hunter2pw -U proxy:pr0xypw x", `-U proxy:${REDACTED}`, "pr0xypw"],
+      ["curl --user=someone:hunter2pw x", `--user=someone:${REDACTED}`, "hunter2pw"],
+      ["mysql -uroot -pS3cretpw app", `-p${REDACTED} app`, "S3cretpw"],
+      ["mysqldump -h db -u root -p'two words' app", `-p${REDACTED} app`, "two words"],
+      ["sshpass -p hunter2pw ssh host-a", `-p ${REDACTED} ssh`, "hunter2pw"],
+      ["redis-cli -h r -a hunter2pw ping", `-a ${REDACTED} ping`, "hunter2pw"],
+      ["docker login -u someone -p hunter2pw ghcr.io", `-p ${REDACTED} ghcr.io`, "hunter2pw"],
+      [`    client-key-data: ${b64("-----BEGIN EC PRIVATE KEY-----\nMH")}`, `client-key-data: ${REDACTED}`, "LS0t"],
+      ["    client-certificate-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t", `-data: ${REDACTED}`, "LS0t"],
+      ['{"client-key-data":"LS0tLS1CRUdJTiBF","token":"k10abcdef12"}', `"token":"${REDACTED}"`, "LS0t"],
+      ["    token: k10abc::server:0123456789abcdef", `token: ${REDACTED}`, "0123456789abcdef"],
+      [`echo ${b64("-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIFoobar")} | base64 -d`, REDACTED, "LS0t"],
+      ['{"auths":{"ghcr.io":{"auth":"c29tZW9uZTpodW50ZXI="}}}', `"auth":"${REDACTED}"`, "c29tZW9uZTpodW50ZXI="],
+      ["PGPASSWORD=hunter2pw psql -h db", `PGPASSWORD=${REDACTED}`, "hunter2pw"],
+      ["MYSQL_PWD=hunter2pw mysql", `MYSQL_PWD=${REDACTED}`, "hunter2pw"],
+      ["curl -H 'Authorization: Bearer abc.def' x", `Authorization: Bearer ${REDACTED}'`, "abc.def"],
+      ['curl -H "Authorization: Basic c29tZW9uZTpodW50ZXI=" x', `Basic ${REDACTED}"`, "c29tZW9uZTpodW50ZXI="],
+      ["curl -H 'authorization: s3cr3tvalue' x", `authorization: ${REDACTED}'`, "s3cr3tvalue"],
+      ["curl -H 'Cookie: sid=abc123; csrf=zzz999' x", `Cookie: ${REDACTED}'`, "zzz999"],
+      ["kubectl --token=abcdef123 get pods", `--token=${REDACTED}`, "abcdef123"],
+      ["gh api --token plainword", `--token ${REDACTED}`, "plainword"],
+      ["git clone https://someone:hunter2pw@git.example/x.git", `someone:${REDACTED}@git`, "hunter2pw"],
+      ["redis://:hunter2pw@redis:6379/0", `redis://:${REDACTED}@redis`, "hunter2pw"],
+      ["machine git.example login someone password hunter2pw", `password ${REDACTED}`, "hunter2pw"],
+      ["machine x\n  login someone\n  password hunter2pw\n", `password ${REDACTED}`, "hunter2pw"],
+      ["openssl rsa -passin pass:hunter2pw -in k.pem", `pass:${REDACTED}`, "hunter2pw"],
+    ];
+    for (const strict of [false, true])
+      for (const [input, expected, secret] of cases) {
+        const r = redact(input, { strict });
+        expect(r.text, input).toContain(expected);
+        expect(r.text, input).not.toContain(secret);
+        // Idempotent: a second pass changes nothing.
+        expect(redact(r.text, { strict }).text, input).toBe(r.text);
+      }
+    for (const s of [
+      "ssh -p2222 host-a; mkdir -p /tmp/x; git log -p",
+      "git push -u origin main",
+      "mysql -u root -p app",
+      "curl -u $USER:$PASS https://x",
+      'curl -H "Authorization: Bearer $API_TOKEN"',
+      "    certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t",
+      "echo LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUM= | base64 -d",
+    ])
+      expect(redact(s, { strict: true }).text, s).toBe(s);
+  });
+
+  it("strict (sessions): every secret-named value, as LB does", () => {
+    expect(redact("token=abcdefgh", { strict: true }).text).toBe(`token=${REDACTED}`);
+    expect(redact("api_key: plainword", { strict: true }).text).toBe(`api_key: ${REDACTED}`);
+    expect(redact("token=abcdefgh").text).toBe("token=abcdefgh");
+    expect(redact("automountServiceAccountToken=false", { strict: true }).text).toBe(
+      "automountServiceAccountToken=false",
+    );
   });
 
   it("hides PEM private keys whole", () => {

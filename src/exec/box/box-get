@@ -1,0 +1,113 @@
+#!/usr/bin/python3 -I -S
+"""box-get: one file of the directory the sandbox shows as --root, to stdout as it is.
+
+Part of agents-io-herdr (docs/exec.md, Linux / Box). The image installs it as /usr/lib/box/box-get;
+the collector runs it inside bubblewrap as `/usr/bin/python3 -I -S /usr/lib/box/box-get --root
+/home/me --max BYTES PATH`, the person's directory mounted read-only at /home/me, and sends what it
+writes on to LB in chunks (counting and hashing the bytes itself). Standard library only.
+
+- PATH is relative: no leading / or ~, no empty part, . or .., no NUL, at most 512 bytes.
+- Each directory on the way, and the file, is opened without following a symlink (path_denied); the
+  file must be a plain file (path_denied) of at most BYTES (too_large); missing: not_found.
+- stdout: the bytes and nothing else. stderr: what went wrong.
+
+Exit codes: 0 done, 1 error, 2 bad_request, 3 not_found, 5 path_denied, 6 too_large.
+"""
+
+import errno
+import os
+import stat
+import sys
+
+PATH_MAX = 512
+DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+
+class Fail(Exception):
+    def __init__(self, code, why):
+        super().__init__(why)
+        self.code = code
+
+
+def check_path(p):
+    """The path's parts, or Fail(2)."""
+    if not p:
+        raise Fail(2, "a path is needed")
+    if "\0" in p:
+        raise Fail(2, "a NUL in the path")
+    if len(p.encode("utf-8", "surrogateescape")) > PATH_MAX:
+        raise Fail(2, "longer than %d bytes" % PATH_MAX)
+    if p.startswith("/") or p.startswith("~"):
+        raise Fail(2, "a path relative to the directory, not / or ~")
+    parts = p.split("/")
+    for part in parts:
+        if not part:
+            raise Fail(2, "an empty part (// or a trailing /)")
+        if part in (".", ".."):
+            raise Fail(2, 'a "%s" in the path' % part)
+    return parts
+
+
+def open_at(fd, name, flags):
+    try:
+        return os.open(name, flags, dir_fd=fd)
+    except FileNotFoundError:
+        raise Fail(3, "no %s" % name)
+    except OSError as e:
+        if e.errno in (errno.ELOOP, errno.ENOTDIR, errno.EMLINK):
+            raise Fail(5, "%s: a symlink or not a directory" % name)
+        raise
+
+
+def get(root, path, limit, out):
+    parts = check_path(path)
+    try:
+        fd = os.open(root, DIR_FLAGS)
+    except FileNotFoundError:
+        raise Fail(3, "no directory %s" % root)
+    for part in parts[:-1]:
+        try:
+            nfd = open_at(fd, part, DIR_FLAGS)
+        finally:
+            os.close(fd)
+        fd = nfd
+    try:
+        ffd = open_at(fd, parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    finally:
+        os.close(fd)
+    try:
+        st = os.fstat(ffd)
+        if not stat.S_ISREG(st.st_mode):
+            raise Fail(5, "%s is not a plain file" % path)
+        if st.st_size > limit:
+            raise Fail(6, "%s is %d bytes, more than %d" % (path, st.st_size, limit))
+        n = 0
+        while True:
+            b = os.read(ffd, 1 << 16)
+            if not b:
+                break
+            n += len(b)
+            if n > limit:
+                raise Fail(6, "%s grew past %d bytes" % (path, limit))
+            out.write(b)
+        out.flush()
+    finally:
+        os.close(ffd)
+
+
+def main(argv):
+    try:
+        if len(argv) != 5 or argv[0] != "--root" or argv[2] != "--max" or not argv[3].isdigit():
+            raise Fail(2, "usage: box-get --root DIR --max BYTES PATH")
+        get(argv[1], argv[4], int(argv[3]), sys.stdout.buffer)
+        return 0
+    except Fail as e:
+        sys.stderr.write("box-get: %s\n" % e)
+        return e.code
+    except OSError as e:
+        sys.stderr.write("box-get: %s\n" % (e.strerror or e))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

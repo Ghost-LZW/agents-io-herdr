@@ -1,0 +1,206 @@
+#!/usr/bin/python3 -I -S
+"""box-put: one file from stdin into the directory the sandbox shows as --root.
+
+Part of agents-io-herdr (docs/exec.md, Linux / Box). The image installs it as /usr/lib/box/box-put;
+the collector runs it inside bubblewrap as `/usr/bin/python3 -I -S /usr/lib/box/box-put --root
+/home/me PATH SIZE SHA256`, the person's directory (or the install cell's .incoming/) mounted at
+/home/me, and writes an upload's chunks to its stdin. Standard library only.
+
+- PATH is relative: no leading / or ~, no empty part, . or .., no NUL, at most 512 bytes.
+- Each directory on the way is opened without following a symlink; a missing one is made (0700). A
+  symlink anywhere on the way: path_denied.
+- The target must not exist (exists): nothing is ever overwritten. For --content-addressed staging,
+  an existing plain file with the announced size and hash succeeds after checking both streams.
+- The bytes go to a temporary file beside it (O_CREAT|O_EXCL|O_NOFOLLOW, 0600). Only when SIZE bytes
+  came and their sha256 is SHA256 is it linked into place (link(2), which fails when the target has
+  appeared meanwhile); otherwise it goes again (mismatch, too_large).
+- stdout: one JSON line {"path", "size", "sha256"}. stderr: what went wrong.
+
+Exit codes: 0 done, 1 error, 2 bad_request, 3 not_found, 4 exists, 5 path_denied, 6 too_large,
+7 mismatch.
+"""
+
+import errno
+import hashlib
+import json
+import os
+import sys
+import stat
+
+PATH_MAX = 512
+DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+
+class Fail(Exception):
+    def __init__(self, code, why):
+        super().__init__(why)
+        self.code = code
+
+
+def check_path(p):
+    """The path's parts, or Fail(2)."""
+    if not p:
+        raise Fail(2, "a path is needed")
+    if "\0" in p:
+        raise Fail(2, "a NUL in the path")
+    if len(p.encode("utf-8", "surrogateescape")) > PATH_MAX:
+        raise Fail(2, "longer than %d bytes" % PATH_MAX)
+    if p.startswith("/") or p.startswith("~"):
+        raise Fail(2, "a path relative to the directory, not / or ~")
+    parts = p.split("/")
+    for part in parts:
+        if not part:
+            raise Fail(2, "an empty part (// or a trailing /)")
+        if part in (".", ".."):
+            raise Fail(2, 'a "%s" in the path' % part)
+    return parts
+
+
+def open_dir_at(fd, name):
+    """A directory under fd, not through a symlink: its descriptor, or Fail(5); FileNotFoundError as is."""
+    try:
+        return os.open(name, DIR_FLAGS, dir_fd=fd)
+    except FileNotFoundError:
+        raise
+    except OSError as e:
+        if e.errno in (errno.ELOOP, errno.ENOTDIR, errno.EMLINK):
+            raise Fail(5, "%s: a symlink or not a directory" % name)
+        raise
+
+
+def open_dirs(root, parts, create):
+    """The directory the parts name under root (each opened without following a symlink)."""
+    try:
+        fd = os.open(root, DIR_FLAGS)
+    except FileNotFoundError:
+        raise Fail(3, "no directory %s" % root)
+    except OSError:
+        raise Fail(5, "%s is not a directory" % root)
+    for part in parts:
+        try:
+            try:
+                nfd = open_dir_at(fd, part)
+            except FileNotFoundError:
+                if not create:
+                    raise Fail(3, "no %s" % part)
+                try:
+                    os.mkdir(part, 0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+                nfd = open_dir_at(fd, part)
+        finally:
+            os.close(fd)
+        fd = nfd
+    return fd
+
+
+def exists_at(fd, name):
+    try:
+        os.stat(name, dir_fd=fd, follow_symlinks=False)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def same_file(dfd, name, size, want):
+    """A staging retry: only an existing plain file with the expected bytes counts."""
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(name, flags, dir_fd=dfd)
+    except OSError:
+        raise Fail(5, "%s is not a plain file" % name)
+    with os.fdopen(fd, "rb") as f:
+        st = os.fstat(f.fileno())
+        if not stat.S_ISREG(st.st_mode):
+            raise Fail(5, "%s is not a plain file" % name)
+        if st.st_size != size:
+            raise Fail(7, "%s has another size" % name)
+        h = hashlib.sha256()
+        n = 0
+        while True:
+            b = f.read(1 << 16)
+            if not b:
+                break
+            n += len(b)
+            if n > size:
+                raise Fail(7, "%s grew" % name)
+            h.update(b)
+        if n != size or h.hexdigest() != want:
+            raise Fail(7, "%s has another sha256" % name)
+
+
+def put(root, path, size, want, stdin, content_addressed=False):
+    parts = check_path(path)
+    dfd = open_dirs(root, parts[:-1], create=True)
+    name = parts[-1]
+    try:
+        if exists_at(dfd, name) and not content_addressed:
+            raise Fail(4, "%s exists; nothing is overwritten" % path)
+        tmp = ".box-put-%s.tmp" % os.urandom(8).hex()
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        fd = os.open(tmp, flags, 0o600, dir_fd=dfd)
+        try:
+            h = hashlib.sha256()
+            n = 0
+            with os.fdopen(fd, "wb") as f:
+                while True:
+                    b = stdin.read(1 << 16)
+                    if not b:
+                        break
+                    n += len(b)
+                    if n > size:
+                        raise Fail(6, "more than the %d bytes announced" % size)
+                    h.update(b)
+                    f.write(b)
+                f.flush()
+                os.fsync(f.fileno())
+            got = h.hexdigest()
+            if n != size or got != want:
+                raise Fail(7, "%d bytes with sha256 %s, not %d with %s" % (n, got, size, want))
+            try:
+                os.link(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+            except FileExistsError:
+                if not content_addressed:
+                    raise Fail(4, "%s exists; nothing is overwritten" % path)
+                same_file(dfd, name, size, want)
+            try:
+                os.fsync(dfd)
+            except OSError:
+                pass
+        finally:
+            try:
+                os.unlink(tmp, dir_fd=dfd)
+            except FileNotFoundError:
+                pass
+        return {"path": path, "size": n, "sha256": got}
+    finally:
+        os.close(dfd)
+
+
+def main(argv):
+    try:
+        content_addressed = bool(argv and argv[0] == "--content-addressed")
+        if content_addressed:
+            argv = argv[1:]
+        if len(argv) != 5 or argv[0] != "--root":
+            raise Fail(2, "usage: box-put --root DIR PATH SIZE SHA256")
+        root, path, size, want = argv[1], argv[2], argv[3], argv[4]
+        if not size.isdigit():
+            raise Fail(2, "SIZE: a number of bytes")
+        if len(want) != 64 or any(c not in "0123456789abcdef" for c in want):
+            raise Fail(2, "SHA256: 64 hex digits")
+        if content_addressed and path not in (want + ".tar", want + ".requirements.in"):
+            raise Fail(2, "staging path must be named by content")
+        r = put(root, path, int(size), want, sys.stdin.buffer, content_addressed)
+        sys.stdout.write(json.dumps(r, separators=(",", ":"), ensure_ascii=False) + "\n")
+        return 0
+    except Fail as e:
+        sys.stderr.write("box-put: %s\n" % e)
+        return e.code
+    except OSError as e:
+        sys.stderr.write("box-put: %s\n" % (e.strerror or e))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -17,10 +17,11 @@ import {
   tildify,
 } from "./config.ts";
 import { DaemonError, runDaemon, writeAioConfig } from "./daemon.ts";
+import { execCommand, shimCommand } from "./execcli.ts";
 import { FeishuApi } from "./feishu.ts";
 import { herdrClient } from "./herdr.ts";
 import { strings } from "./i18n.ts";
-import { DAEMON_LABEL, HOST_LABEL, install, jobState, uninstall } from "./launchd.ts";
+import { DAEMON_LABEL, HOST_LABEL, install, jobState, stableNode, uninstall } from "./launchd.ts";
 import type { DeliverResult, HostHelloResult, ReplyRoute } from "./protocol.ts";
 import { hideSecrets } from "./redact.ts";
 import {
@@ -31,6 +32,7 @@ import {
   realSecretSource,
   type SecretSource,
 } from "./secrets.ts";
+import { sessionsCommand } from "./sessionscli.ts";
 import { clearSetup, newCode, readSetup, SETUP_TTL_MS, Store, writePrivate, writeSetup } from "./store.ts";
 import { type Exec, idleMs, machineName, realExec } from "./system.ts";
 import { transcriptSource } from "./transcript.ts";
@@ -46,6 +48,8 @@ export const HELP = `agents-io-herdr — Feishu/Lark notices and replies for cod
   agents-io-herdr test              send a test message to the workbench (or the owner's DM)
   agents-io-herdr run               the bridge in the foreground (what launchd runs)
   agents-io-herdr daemon            the project's agents-io daemon in the foreground
+  agents-io-herdr sessions …        this machine's Claude Code / Codex sessions for LB (sessions help)
+  agents-io-herdr exec …            what LB may run on this machine: ceiling, switch, log, doctor (exec help)
 
 config: $AGENTS_IO_HERDR_CONFIG or ~/.config/agents-io-herdr/config.json (see config.example.json)
 `;
@@ -62,6 +66,8 @@ export interface Io {
   now: () => number;
   /** This package's directory (real path). */
   pkgDir: string;
+  /** All of stdin (a pipe; "" from a terminal, which would echo what is typed). */
+  stdin: () => Promise<string>;
 }
 
 export function realIo(): Io {
@@ -82,6 +88,17 @@ export function realIo(): Io {
     fetch: globalThis.fetch,
     now: Date.now,
     pkgDir: dirname(dirname(realpathSync(fileURLToPath(import.meta.url)))),
+    stdin: async () => {
+      if (process.stdin.isTTY) return "";
+      const chunks: Buffer[] = [];
+      let size = 0;
+      for await (const c of process.stdin as AsyncIterable<Buffer>) {
+        chunks.push(c);
+        size += c.length;
+        if (size > 64 * 1024) break;
+      }
+      return Buffer.concat(chunks).toString("utf8");
+    },
   };
 }
 
@@ -114,6 +131,10 @@ async function command(argv: string[], io: Io): Promise<number> {
     io.out(HELP);
     return sub ? 0 : 2;
   }
+  if (sub === "sessions") return await sessionsCommand(rest, io);
+  if (sub === "exec") return await execCommand(rest, io);
+  // sshd's forced command for the dedicated exec user: frames on stdout, nothing else.
+  if (sub === "exec-shim") return await shimCommand(io);
   const { values } = parseArgs({
     args: rest,
     options: {
@@ -390,7 +411,7 @@ function installCmd(io: Io, c: Config): number {
   }
   const paths = install(c, {
     home: io.home,
-    node: process.execPath,
+    node: stableNode(process.execPath),
     bin: join(io.pkgDir, "bin", "agents-io-herdr"),
     env,
     exec: io.exec,

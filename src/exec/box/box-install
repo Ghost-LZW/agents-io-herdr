@@ -1,0 +1,546 @@
+#!/usr/bin/python3 -I -S
+"""box-install: installs one approved version of a tool on the Box's install cell, step by step.
+
+Part of agents-io-herdr (docs/exec.md, Linux / Box). The image installs it as
+/usr/lib/box/box-install; LB starts each step as exec.v1 `["box-install", <step>]` on the install
+cell, whose collector runs it inside bubblewrap as `/usr/bin/python3 -I -S
+/usr/lib/box/box-install <step> --name N --version V --tree T --tar-sha256 S …` with the step's
+mounts. Nobody's directory is ever mounted here. Standard library only, and `uv` for packages.
+
+  install  The tar (`git archive` of the approved tree; --tar, read-only) must have the sha256 LB
+           recorded. It is unpacked into <tool>/src/ (the staging directory, mounted at /opt/tool):
+           plain files and directories only — no symlink, hard link, device, absolute path or ..
+           — and the git tree id of what was unpacked must be --tree. manifest.json must name this
+           tool and version. Then `uv venv <tool>/venv` with the image's python3, `uv pip install
+           --require-hashes --only-binary :all: --no-deps -r <lock>`, a .pth in site-packages
+           pointing at the source (`-I` ignores PYTHONPATH), one launcher per entry in <tool>/bin/
+           (`#!<tool>/venv/bin/python -I`), and `python3 -I -S -m compileall`. No code of the tool
+           or its packages runs in this step. Network: open (the package index).
+  smoke    <tool> read-only, no network, an empty HOME: each entry's `--help` must exit 0.
+  commit   The tools volume (--tools) writable: .box-tool.json is written into the staging
+           directory, which is renamed to <tools>/<name>/<version>-<tree12>/. The same version
+           there already with the same tree: done; with another tree: exists.
+  lock     --input (requirements.in, read-only) must have the sha256 given as --tar-sha256;
+           `uv pip compile --generate-hashes --only-binary :all: --python-version 3.13
+           --python-platform x86_64-manylinux_2_28` writes the lock file to stdout. Network: open.
+
+manifest.json (at the top of the tool's directory) is read for: name, version, entries
+({"<entry>": "<module>:<function>"}), personDir ("rw" or "ro"), lock (the lock file, default
+requirements.lock) and src (where the importable code is, default src). Other keys are LB's.
+
+Exit codes: 0 done, 1 error, 2 bad_request, 3 not_found, 4 exists, 5 path_denied (the tar holds
+what is never unpacked), 6 too_large, 7 mismatch (sha256), 8 tree_mismatch, 9 smoke_failed,
+10 install_failed (uv), 11 bad_manifest.
+"""
+
+import argparse
+import datetime
+import glob
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+
+UV_PATHS = ("/usr/local/bin/uv", "/usr/bin/uv")
+NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$")
+TREE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+ENTRY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+DOTTED = r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"
+TARGET = re.compile(r"^(%s):(%s)$" % (DOTTED, DOTTED))
+# An entry that would be an interpreter or a shell is no tool of its own.
+NOT_ENTRIES = re.compile(r"^(?:python[0-9.]*|pip[0-9.]*|node|nodejs|deno|bun|perl|ruby|php|lua|sh|bash|dash|zsh|ksh|csh|tcsh|fish|env|busybox|uv|uvx)$")
+MAX_FILES = 20000
+MAX_BYTES = 256 * 1024 * 1024
+MAX_PATH = 1024
+MAX_ENTRIES = 16
+SMOKE_SECONDS = 120
+
+
+class Fail(Exception):
+    def __init__(self, code, why):
+        super().__init__(why)
+        self.code = code
+
+
+def say(s):
+    sys.stderr.write("box-install: %s\n" % s)
+    sys.stderr.flush()
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            b = f.read(1 << 20)
+            if not b:
+                return h.hexdigest()
+            h.update(b)
+
+
+def rel_path(p, what):
+    """A relative path inside the tool, as its parts; or Fail(code)."""
+    if not isinstance(p, str) or not p or "\0" in p or len(p.encode("utf-8", "surrogateescape")) > MAX_PATH:
+        raise Fail(5, "%s: not a path" % what)
+    if p.startswith("/"):
+        raise Fail(5, "%s: an absolute path (%s)" % (what, p[:80]))
+    parts = p.split("/")
+    for part in parts:
+        if part in ("", ".", "..") or len(part.encode("utf-8", "surrogateescape")) > 255:
+            raise Fail(5, "%s: an empty part, . or .. (%s)" % (what, p[:80]))
+    return parts
+
+
+# ---- the tar ------------------------------------------------------------------------------------
+
+
+def tar_members(tar_path, name, version):
+    """The tar's files as [(parts, executable, member)], its directories checked and dropped.
+
+    Members are relative to the tool's directory (`git archive <tree>`), or all under
+    tools/<name>/<version>/ (`git archive <commit> tools/<name>/<version>`), which is taken off.
+    """
+    try:
+        tf = tarfile.open(tar_path, mode="r:")
+    except (tarfile.TarError, OSError) as e:
+        raise Fail(2, "not a plain tar: %s" % e)
+    prefix = ["tools", name, version]
+    raw = []
+    count = 0
+    total = 0
+    for m in tf:
+        count += 1
+        if count > MAX_FILES:
+            raise Fail(6, "more than %d members" % MAX_FILES)
+        n = m.name[:-1] if m.name.endswith("/") else m.name
+        parts = rel_path(n, "a member")
+        if m.isdir():
+            raw.append((parts, None, m))
+        elif m.isreg() and not m.issparse():
+            total += m.size
+            if total > MAX_BYTES:
+                raise Fail(6, "more than %d bytes" % MAX_BYTES)
+            raw.append((parts, bool(m.mode & 0o111), m))
+        else:
+            kind = "a symlink" if m.issym() else "a hard link" if m.islnk() else "a device or fifo"
+            raise Fail(5, "%s in the tar: %s" % (kind, n[:120]))
+    strip = 0
+    files = [r for r in raw if r[1] is not None]
+    if files and all(r[0][:3] == prefix and len(r[0]) > 3 for r in files):
+        strip = 3
+    out = []
+    seen = set()
+    dirs = set()
+    for parts, exe, m in raw:
+        if strip:
+            if parts == prefix[: len(parts)] and exe is None:
+                continue
+            if parts[:3] != prefix:
+                raise Fail(5, "a member outside %s: %s" % ("/".join(prefix), "/".join(parts)[:120]))
+            parts = parts[3:]
+        key = "/".join(parts)
+        if exe is None:
+            dirs.add(key)
+            continue
+        if key in seen:
+            raise Fail(5, "the tar names %s twice" % key[:120])
+        seen.add(key)
+        out.append((parts, exe, m))
+    for parts, _, _ in out:
+        for i in range(1, len(parts)):
+            if "/".join(parts[:i]) in seen:
+                raise Fail(5, "%s is a file and a directory" % "/".join(parts[:i])[:120])
+    return tf, out
+
+
+def git_tree(files, algo):
+    """The git tree id of files [(parts, executable, blob id bytes)], as git computes it."""
+    root = {}
+    for parts, exe, oid in files:
+        d = root
+        for p in parts[:-1]:
+            d = d.setdefault(p, {})
+        d[parts[-1]] = (b"100755" if exe else b"100644", oid)
+
+    def tree(d):
+        items = []
+        for name, v in d.items():
+            nb = name.encode("utf-8", "surrogateescape")
+            if isinstance(v, dict):
+                items.append((nb + b"/", b"40000", nb, tree(v)))
+            else:
+                items.append((nb, v[0], nb, v[1]))
+        items.sort(key=lambda x: x[0])
+        body = b"".join(mode + b" " + nb + b"\0" + oid for _, mode, nb, oid in items)
+        h = algo()
+        h.update(b"tree %d\0" % len(body))
+        h.update(body)
+        return h.digest()
+
+    return tree(root).hex()
+
+
+def unpack(tar_path, name, version, src, algo):
+    """The tar into src (empty), plain files only; the git tree id of what was unpacked."""
+    tf, files = tar_members(tar_path, name, version)
+    with tf:
+        blobs = []
+        for parts, exe, m in files:
+            d = src
+            for p in parts[:-1]:
+                d = os.path.join(d, p)
+                try:
+                    os.mkdir(d, 0o755)
+                except FileExistsError:
+                    if not stat.S_ISDIR(os.lstat(d).st_mode):
+                        raise Fail(5, "%s is not a directory" % d)
+            target = os.path.join(d, parts[-1])
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+            fd = os.open(target, flags, 0o755 if exe else 0o644)
+            h = algo()
+            h.update(b"blob %d\0" % m.size)
+            n = 0
+            r = tf.extractfile(m)
+            with os.fdopen(fd, "wb") as f:
+                while True:
+                    b = r.read(1 << 20)
+                    if not b:
+                        break
+                    n += len(b)
+                    h.update(b)
+                    f.write(b)
+            if n != m.size:
+                raise Fail(2, "%s is cut short in the tar" % "/".join(parts)[:120])
+            os.chmod(target, 0o755 if exe else 0o644)
+            blobs.append((parts, exe, h.digest()))
+    return git_tree(blobs, algo)
+
+
+# ---- the manifest -------------------------------------------------------------------------------
+
+
+def manifest(src, name, version):
+    path = os.path.join(src, "manifest.json")
+    try:
+        with open(path, "rb") as f:
+            m = json.loads(f.read(256 * 1024).decode("utf-8"))
+    except (OSError, ValueError) as e:
+        raise Fail(11, "manifest.json does not read: %s" % e)
+    if not isinstance(m, dict):
+        raise Fail(11, "manifest.json is not an object")
+    if m.get("name") != name or m.get("version") != version:
+        raise Fail(11, "manifest.json names %r %r, not %s %s" % (m.get("name"), m.get("version"), name, version))
+    entries = m.get("entries")
+    if not isinstance(entries, dict) or not entries or len(entries) > MAX_ENTRIES:
+        raise Fail(11, "entries: 1 to %d of {\"<entry>\": \"<module>:<function>\"}" % MAX_ENTRIES)
+    for e, target in entries.items():
+        if not ENTRY.match(e) or NOT_ENTRIES.match(e):
+            raise Fail(11, "entries: %r is not a name a tool's entry may have" % e)
+        if not isinstance(target, str) or not TARGET.match(target):
+            raise Fail(11, "entries: %r is not <module>:<function>" % target)
+    if m.get("personDir") not in ("rw", "ro"):
+        raise Fail(11, 'personDir: "rw" or "ro"')
+    lock = m.get("lock", "requirements.lock")
+    code = m.get("src", "src")
+    rel_path(lock, "lock")
+    if code != ".":
+        rel_path(code, "src")
+    if not os.path.isfile(os.path.join(src, lock)) or os.path.islink(os.path.join(src, lock)):
+        raise Fail(11, "lock: no file %s in the tool" % lock)
+    code_dir = src if code == "." else os.path.join(src, code)
+    if not os.path.isdir(code_dir) or os.path.islink(code_dir):
+        raise Fail(11, "src: no directory %s in the tool" % code)
+    return {"entries": entries, "personDir": m["personDir"], "lock": lock, "src": code_dir}
+
+
+# ---- the steps ----------------------------------------------------------------------------------
+
+
+def uv_env(o):
+    home = os.environ.get("HOME") or "/home/me"
+    env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "TZ")}
+    env.update(
+        {
+            "UV_NO_CONFIG": "1",
+            "UV_PYTHON_DOWNLOADS": "never",
+            "UV_CACHE_DIR": os.path.join(home, ".cache", "uv"),
+            "UV_NO_PROGRESS": "1",
+            "UV_LINK_MODE": "copy",
+        }
+    )
+    return env
+
+
+def find_uv(o):
+    if o.uv:
+        return o.uv
+    for p in UV_PATHS:
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    raise Fail(10, "no uv in the image (%s)" % ", ".join(UV_PATHS))
+
+
+def run(cmd, env, what):
+    say("%s: %s" % (what, " ".join(cmd)))
+    r = subprocess.run(cmd, env=env, stdin=subprocess.DEVNULL, stdout=sys.stderr, stderr=sys.stderr)
+    if r.returncode != 0:
+        raise Fail(10, "%s failed (exit %d)" % (what, r.returncode))
+
+
+LAUNCHER = """#!{python} -I
+# box-install: the entry {entry} of {name} {version} ({target}).
+import sys
+from importlib import import_module
+
+
+def _entry():
+    obj = import_module({module!r})
+    for attr in {attrs!r}:
+        obj = getattr(obj, attr)
+    return obj
+
+
+if __name__ == "__main__":
+    sys.exit(_entry()())
+"""
+
+
+def staged_path(tool):
+    return os.path.join(tool, ".box-staged.json")
+
+
+def install(o):
+    if not os.path.isdir(o.tool):
+        raise Fail(3, "no staging directory %s" % o.tool)
+    if os.listdir(o.tool):
+        raise Fail(4, "the staging directory %s is not empty" % o.tool)
+    if not os.path.isfile(o.tar):
+        raise Fail(3, "no tar %s" % o.tar)
+    got = sha256_file(o.tar)
+    if got != o.tar_sha256:
+        raise Fail(7, "the tar's sha256 is %s, not %s" % (got, o.tar_sha256))
+    src = os.path.join(o.tool, "src")
+    os.mkdir(src, 0o755)
+    algo = hashlib.sha1 if len(o.tree) == 40 else hashlib.sha256
+    tree = unpack(o.tar, o.name, o.version, src, algo)
+    if tree != o.tree:
+        raise Fail(8, "what the tar holds is tree %s, not the approved %s" % (tree, o.tree))
+    m = manifest(src, o.name, o.version)
+    uv = find_uv(o)
+    env = uv_env(o)
+    venv = os.path.join(o.tool, "venv")
+    run([uv, "venv", "--python", o.python, "--python-preference", "only-system", venv], env, "uv venv")
+    vpython = os.path.join(venv, "bin", "python")
+    run(
+        [uv, "pip", "install", "--require-hashes", "--only-binary", ":all:", "--no-deps",
+         "-r", os.path.join(src, m["lock"]), "--python", vpython],
+        env,
+        "uv pip install",
+    )
+    sites = glob.glob(os.path.join(venv, "lib", "python*", "site-packages"))
+    if len(sites) != 1:
+        raise Fail(10, "no single site-packages in the venv (%d)" % len(sites))
+    with open(os.path.join(sites[0], "box-tool.pth"), "w", encoding="utf-8") as f:
+        f.write(m["src"] + "\n")
+    bindir = os.path.join(o.tool, "bin")
+    os.mkdir(bindir, 0o755)
+    for entry, target in sorted(m["entries"].items()):
+        module, func = target.split(":")
+        text = LAUNCHER.format(python=vpython, entry=entry, name=o.name, version=o.version, target=target,
+                               module=module, attrs=func.split("."))
+        path = os.path.join(bindir, entry)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o755)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(path, 0o755)
+    # The image's own python3 and no site: nothing installed above is imported, no .pth is read.
+    r = subprocess.run([o.python, "-I", "-S", "-m", "compileall", "-q", src, sites[0]],
+                       env={"PATH": "/usr/bin"}, stdin=subprocess.DEVNULL, stdout=sys.stderr, stderr=sys.stderr)
+    if r.returncode != 0:
+        say("compileall: some files did not compile (exit %d); they compile when first imported" % r.returncode)
+    staged = {"name": o.name, "version": o.version, "tree": o.tree, "tarSha256": o.tar_sha256,
+              "entries": m["entries"], "personDir": m["personDir"]}
+    with open(staged_path(o.tool), "w", encoding="utf-8") as f:
+        json.dump(staged, f, separators=(",", ":"), sort_keys=True)
+    return {"step": "install", "name": o.name, "version": o.version, "tree": o.tree,
+            "entries": sorted(m["entries"]), "personDir": m["personDir"]}
+
+
+def read_staged(tool, o):
+    try:
+        with open(staged_path(tool), "rb") as f:
+            s = json.loads(f.read(256 * 1024).decode("utf-8"))
+    except FileNotFoundError:
+        raise Fail(3, "nothing staged in %s: install first" % tool)
+    except (OSError, ValueError) as e:
+        raise Fail(1, "the staged record does not read: %s" % e)
+    want = {"name": o.name, "version": o.version, "tree": o.tree, "tarSha256": o.tar_sha256}
+    if any(s.get(k) != v for k, v in want.items()):
+        raise Fail(8, "staged is %s %s tree %s, not %s %s tree %s" % (
+            s.get("name"), s.get("version"), s.get("tree"), o.name, o.version, o.tree))
+    return s
+
+
+def smoke(o):
+    s = read_staged(o.tool, o)
+    env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "TZ")}
+    failed = []
+    for entry in sorted(s["entries"]):
+        cmd = [os.path.join(o.tool, "bin", entry), "--help"]
+        try:
+            r = subprocess.run(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, timeout=SMOKE_SECONDS, cwd=env.get("HOME") or "/")
+            code = r.returncode
+            out = r.stdout
+        except subprocess.TimeoutExpired as e:
+            code = "timeout"
+            out = e.stdout or b""
+        except OSError as e:
+            code = "not started (%s)" % (e.strerror or e)
+            out = b""
+        if code != 0:
+            failed.append(entry)
+            say("%s --help: exit %s" % (entry, code))
+            tail = out[-2000:].decode("utf-8", "replace").rstrip()
+            if tail:
+                sys.stderr.write(tail + "\n")
+        else:
+            say("%s --help: exit 0" % entry)
+    if failed:
+        raise Fail(9, "--help did not exit 0: %s" % ", ".join(failed))
+    return {"step": "smoke", "name": o.name, "version": o.version, "entries": sorted(s["entries"])}
+
+
+def read_tool_file(path):
+    try:
+        with open(path, "rb") as f:
+            return json.loads(f.read(256 * 1024).decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def real_dir(p):
+    try:
+        st = os.lstat(p)
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISDIR(st.st_mode):
+        raise Fail(5, "%s is not a directory" % p)
+    return True
+
+
+def commit(o):
+    tree12 = o.tree[:12]
+    staging = os.path.join(o.tools, ".staging", "%s-%s-%s" % (o.name, o.version, tree12))
+    parent = os.path.join(o.tools, o.name)
+    target = os.path.join(parent, "%s-%s" % (o.version, tree12))
+    done = {"step": "commit", "name": o.name, "version": o.version, "tree": o.tree,
+            "dir": "%s/%s-%s" % (o.name, o.version, tree12)}
+
+    def same_there():
+        t = read_tool_file(os.path.join(target, ".box-tool.json"))
+        if t is None:
+            raise Fail(4, "%s is there without a readable .box-tool.json" % done["dir"])
+        if t.get("tree") != o.tree:
+            raise Fail(4, "%s is there with tree %s" % (done["dir"], t.get("tree")))
+        return True
+
+    if real_dir(target) and same_there():
+        if real_dir(staging):
+            shutil.rmtree(staging)
+        say("%s is installed already" % done["dir"])
+        return done
+    if not real_dir(staging):
+        raise Fail(3, "nothing staged for %s: install first" % done["dir"])
+    s = read_staged(staging, o)
+    record = {"name": o.name, "version": o.version, "tree": o.tree, "tarSha256": o.tar_sha256,
+              "entries": s["entries"], "personDir": s["personDir"],
+              "installedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    tmp = os.path.join(staging, ".box-tool.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(record, f, separators=(",", ":"), sort_keys=True)
+        f.write("\n")
+    os.replace(tmp, os.path.join(staging, ".box-tool.json"))
+    os.unlink(staged_path(staging))
+    if not real_dir(parent):
+        os.mkdir(parent, 0o755)
+    try:
+        os.rename(staging, target)
+    except OSError:
+        # Someone got there first: the same tree is done, another is exists.
+        if real_dir(target) and same_there():
+            shutil.rmtree(staging, ignore_errors=True)
+            return done
+        raise
+    try:
+        os.unlink(os.path.join(o.tools, ".incoming", "%s.tar" % o.tar_sha256))
+    except OSError:
+        pass
+    say("installed %s" % done["dir"])
+    return done
+
+
+def lock(o):
+    if not os.path.isfile(o.input):
+        raise Fail(3, "no %s" % o.input)
+    got = sha256_file(o.input)
+    if got != o.tar_sha256:
+        raise Fail(7, "the requirements' sha256 is %s, not %s" % (got, o.tar_sha256))
+    uv = find_uv(o)
+    cmd = [uv, "pip", "compile", "--generate-hashes", "--only-binary", ":all:", "--python-version", "3.13",
+           "--python-platform", "x86_64-manylinux_2_28", o.input]
+    say("uv pip compile: %s" % " ".join(cmd))
+    r = subprocess.run(cmd, env=uv_env(o), stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr)
+    if r.returncode != 0:
+        raise Fail(10, "uv pip compile failed (exit %d)" % r.returncode)
+    return None
+
+
+STEPS = {"install": install, "smoke": smoke, "commit": commit, "lock": lock}
+
+
+def parse(argv):
+    p = argparse.ArgumentParser(prog="box-install", add_help=False)
+    p.add_argument("step", choices=sorted(STEPS))
+    p.add_argument("--name", required=True)
+    p.add_argument("--version", required=True)
+    p.add_argument("--tree", required=True)
+    p.add_argument("--tar-sha256", required=True, dest="tar_sha256")
+    p.add_argument("--tool", default="/opt/tool")
+    p.add_argument("--tar", default="/run/box/tool.tar")
+    p.add_argument("--tools", default="/srv/tools")
+    p.add_argument("--input", default="/run/box/requirements.in")
+    p.add_argument("--uv", default=None)
+    p.add_argument("--python", default="/usr/bin/python3")
+    try:
+        o = p.parse_args(argv)
+    except SystemExit:
+        raise Fail(2, "usage: box-install install|smoke|commit|lock --name N --version V --tree T --tar-sha256 S")
+    if not NAME.match(o.name) or not VERSION.match(o.version) or not TREE.match(o.tree) or not SHA256.match(o.tar_sha256):
+        raise Fail(2, "--name, --version, --tree or --tar-sha256 does not read")
+    return o
+
+
+def main(argv):
+    try:
+        o = parse(argv)
+        r = STEPS[o.step](o)
+        if r is not None:
+            sys.stdout.write(json.dumps(r, separators=(",", ":"), sort_keys=True) + "\n")
+        return 0
+    except Fail as e:
+        say(str(e))
+        return e.code
+    except OSError as e:
+        say("%s%s" % (e.strerror or e, (": %s" % e.filename) if getattr(e, "filename", None) else ""))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -164,6 +164,19 @@ agents-io-herdr setup --wait
 
 `agents-io-herdr test` 发一条测试消息，检查整条链路。
 
+## 给助手服务器的会话与执行（可选）
+
+和 bridge 无关：`agents-io-herdr sessions` 把这台电脑作为节点接到 LB——与它配对的一个自托管助手服务器
+（`sessions pair --lb-url <url>`）。它列出这台电脑上的 Claude Code / Codex 会话（herdr 里的、普通终端里的、
+无头的；在跑、在等人、最近结束的），在电脑上脱敏后只读地交给 LB；`sessions install` 把采集器装成 launchd
+任务 `io.agents-io-herdr.sessions`，`sessions off` / `sessions uninstall` 停掉它。见
+[docs/sessions.md](docs/sessions.md)（英文）。
+
+电脑上写了上限文件（`agents-io-herdr exec ceiling --preset …`）以后，LB 还可以请它执行命令（`exec.v1`）：
+只在上限允许的范围内，放进默认拒绝的沙箱（macOS 用 seatbelt，可再换成单独的用户；Linux 用 bubblewrap），
+每条执行起进程之前先记账、绝不执行两次，输出离开电脑之前先脱敏。没有这个文件就什么都不执行。
+`agents-io-herdr exec off` 立刻停掉。见 [docs/exec.md](docs/exec.md)（英文）。
+
 ## 配置项
 
 `~/.config/agents-io-herdr/config.json`（或 `$AGENTS_IO_HERDR_CONFIG`）；每一项都可以不写。
