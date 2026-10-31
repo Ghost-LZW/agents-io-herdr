@@ -111,6 +111,15 @@ export function tailOf(text: string, max = 20): string {
   return redact(body).text;
 }
 
+/** An interactive page keeps question tabs, rules and navigation hints intact. */
+export function dialogOf(text: string, max = 80): string {
+  return redact(
+    squeeze(text.split("\n").map((l) => l.trimEnd()))
+      .slice(-max)
+      .join("\n"),
+  ).text;
+}
+
 export interface DialogOption {
   /** The key to press (`1`…`9`). */
   key: string;
