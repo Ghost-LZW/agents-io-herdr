@@ -19,6 +19,18 @@ export interface Job {
 
 const xml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+/**
+ * The Node a job runs. `process.execPath` resolves Homebrew's links to a versioned Cellar path
+ * (`/opt/homebrew/Cellar/node@24/24.22.0/bin/node`) that `brew upgrade` deletes; the formula's
+ * `opt` link (`/opt/homebrew/opt/node@24/bin/node`) follows upgrades. Other paths as they are.
+ */
+export function stableNode(execPath: string, exists: (p: string) => boolean = existsSync): string {
+  const m = /^(.*)\/Cellar\/([^/]+)\/[^/]+\/bin\/node$/.exec(execPath);
+  if (!m) return execPath;
+  const opt = `${m[1]}/opt/${m[2]}/bin/node`;
+  return exists(opt) ? opt : execPath;
+}
+
 export function jobs(c: Config, o: { node: string; bin: string }): Job[] {
   return [
     { label: DAEMON_LABEL, args: [o.node, o.bin, "daemon"], log: join(c.paths.logDir, "daemon.log") },

@@ -1,0 +1,1613 @@
+{
+  "contract": "agents-io-herdr exec.v1, revision 3 (docs/exec.md §4, §9.2)",
+  "notes": [
+    "LB 和 agents-io-herdr 各放一份，逐字相同；改它时两个仓库用同一条提交说明。",
+    "不写机器名、用户名、家里的域名：它迟早要进公开的 main。",
+    "两边都读全部样例：收到的帧读出来不丢字段（error.data 也在），发出的帧和这里深度相等。",
+    "hello.ceiling.summary 由上限文件生成（N2），LB 只存、只显示，不解释。",
+    "id 都是虚构的；effect_id 由 LB 按 §4.3 算，电脑只认格式 eff_[A-Za-z0-9_-]{1,96}。"
+  ],
+  "close": {
+    "4400": "bad_hello",
+    "4401": "pending",
+    "4403": "refused",
+    "4408": "silent",
+    "4409": "replaced",
+    "4410": "generation_changed"
+  },
+  "refusals": [
+    "unsupported",
+    "bad_request",
+    "exec_off",
+    "retired",
+    "clock_skew",
+    "stale_generation",
+    "deadline_passed",
+    "deadline_too_far",
+    "over_ceiling",
+    "never",
+    "needs_grant",
+    "grant_invalid",
+    "widen_disabled",
+    "not_owner",
+    "unattended",
+    "busy",
+    "runner_unavailable",
+    "sandbox_unavailable",
+    "path_outside",
+    "path_denied",
+    "too_large",
+    "effect_conflict"
+  ],
+  "limits": {
+    "errorDataBytes": 4096,
+    "chunkBytes": 524288,
+    "idChars": 100,
+    "clockSkewMs": 30000,
+    "silentMs": 75000,
+    "resultWithinMs": 5000
+  },
+  "frames": {
+    "challenge": {
+      "t": "challenge",
+      "nonce": "bm9uY2Utbm9uY2Utbm9uY2Utbm9uY2Utbm9uY2U="
+    },
+    "hello": {
+      "v1": {
+        "t": "hello",
+        "node": "00000000-0000-4000-8000-00000000000a",
+        "sig": "c2lnbmF0dXJl",
+        "version": "agents-io-herdr-sessions/1",
+        "caps": ["sessions"],
+        "machine": {
+          "name": "host-a",
+          "platform": "darwin"
+        }
+      },
+      "v2": {
+        "t": "hello",
+        "node": "00000000-0000-4000-8000-00000000000a",
+        "sig": "c2lnbmF0dXJl",
+        "version": "agents-io-herdr-sessions/2",
+        "caps": ["sessions", "exec.v1", "transfer.v1", "agents.v1"],
+        "machine": {
+          "name": "host-a",
+          "platform": "darwin"
+        },
+        "generation": 3,
+        "ceiling": {
+          "sha": "3f1c9a0b7d2e4f60",
+          "summary": {
+            "version": 2,
+            "preset": "agent-user",
+            "runner": "user",
+            "network": "off",
+            "agents": "never",
+            "limits": {
+              "maxSeconds": 1800,
+              "outputBytes": 262144,
+              "concurrent": 4
+            }
+          }
+        },
+        "clock": 1761300000000
+      },
+      "v2_no_ceiling": {
+        "t": "hello",
+        "node": "00000000-0000-4000-8000-00000000000a",
+        "sig": "c2lnbmF0dXJl",
+        "version": "agents-io-herdr-sessions/2",
+        "caps": ["sessions"],
+        "machine": {
+          "name": "host-a",
+          "platform": "darwin"
+        },
+        "generation": 0,
+        "clock": 1761300000000
+      }
+    },
+    "welcome": {
+      "v1": {
+        "t": "welcome"
+      },
+      "v2": {
+        "t": "welcome",
+        "generation": 3,
+        "owner": "00000000-0000-4000-8000-0000000000b1",
+        "now": 1761300000123,
+        "exec": true
+      },
+      "v2_exec_off": {
+        "t": "welcome",
+        "generation": 3,
+        "owner": "00000000-0000-4000-8000-0000000000b1",
+        "now": 1761300000123,
+        "exec": false
+      }
+    },
+    "call": {
+      "session_read": {
+        "t": "call",
+        "id": "c-read",
+        "op": "session.read",
+        "args": {
+          "id": "11111111-2222-4333-8444-555555555555",
+          "offset": 0,
+          "limit": 30
+        }
+      },
+      "exec": {
+        "t": "call",
+        "id": "c-exec",
+        "op": "exec.v1",
+        "effect_id": "eff_q3vjz7k2m4n6p8r0s2t4v6x8yz",
+        "deadline": 1761300120000,
+        "generation": 3,
+        "grant": null,
+        "origin": {
+          "conversation": "00000000-0000-4000-8000-0000000000d1",
+          "turn": "inp_0001",
+          "person": "00000000-0000-4000-8000-0000000000b1",
+          "agent": "00000000-0000-4000-8000-0000000000c1",
+          "attended": true,
+          "where": "dm"
+        },
+        "args": {
+          "argv": ["git", "status", "--short"],
+          "cwd": "~/repos/project",
+          "shell": false,
+          "stdin": null,
+          "env": {},
+          "policy": {
+            "network": "off",
+            "write": ["~/repos/project/build", "~/repos/project/a"]
+          }
+        }
+      },
+      "exec_group_granted": {
+        "t": "call",
+        "id": "c-exec-group",
+        "op": "exec.v1",
+        "effect_id": "eff_a1b2c3d4e5f6g7h2i3j4k5l6mn",
+        "deadline": 1761300120000,
+        "generation": 3,
+        "grant": {
+          "id": "gr_0001",
+          "node": "00000000-0000-4000-8000-00000000000a",
+          "generation": 3,
+          "kind": "once",
+          "commandHash": "8b357d41b7584b0c702704d04a268bd5da4b2b873fd8af84733253fa6ec99ab7",
+          "scope": {
+            "conversation": "00000000-0000-4000-8000-0000000000d2",
+            "cwd": "~/repos/工程"
+          },
+          "approvedBy": "00000000-0000-4000-8000-0000000000b1",
+          "approvedAt": 1761299940000,
+          "expiresAt": 1761300840000,
+          "card": "om_0001"
+        },
+        "origin": {
+          "conversation": "00000000-0000-4000-8000-0000000000d2",
+          "turn": "inp_0002",
+          "person": "00000000-0000-4000-8000-0000000000b1",
+          "agent": "00000000-0000-4000-8000-0000000000c1",
+          "attended": true,
+          "where": "group"
+        },
+        "args": {
+          "argv": ["/bin/sh", "-c", "echo \"标记\" > out.txt\ncat out.txt"],
+          "cwd": "~/repos/工程",
+          "shell": true,
+          "stdin": "第一行\n\"引号\"\t制表\n",
+          "env": {
+            "TERM": "dumb",
+            "LANG": "zh_CN.UTF-8"
+          },
+          "policy": {
+            "network": "proxy",
+            "write": ["~/repos/工程"]
+          }
+        }
+      },
+      "upload": {
+        "t": "call",
+        "id": "c-upload",
+        "op": "upload.v1",
+        "effect_id": "eff_upl0ad2m4n6p8r0s2t4v6x8yz",
+        "deadline": 1761300120000,
+        "generation": 3,
+        "grant": null,
+        "origin": {
+          "conversation": "00000000-0000-4000-8000-0000000000d1",
+          "turn": "inp_0001",
+          "person": "00000000-0000-4000-8000-0000000000b1",
+          "agent": "00000000-0000-4000-8000-0000000000c1",
+          "attended": true,
+          "where": "dm"
+        },
+        "args": {
+          "path": "~/repos/project/in/data.csv",
+          "size": 11,
+          "sha256": "0c7519a734cd41ac2c8fcc599c713091d0dddb2ccd90ecad7f30e4d9575aed40",
+          "mode": "0644",
+          "overwrite": false
+        }
+      },
+      "download": {
+        "t": "call",
+        "id": "c-download",
+        "op": "download.v1",
+        "effect_id": "eff_d0wnl0ad6p8r0s2t4v6x8y2ab",
+        "deadline": 1761300120000,
+        "generation": 3,
+        "grant": null,
+        "origin": {
+          "conversation": "00000000-0000-4000-8000-0000000000d1",
+          "turn": "inp_0001",
+          "person": "00000000-0000-4000-8000-0000000000b1",
+          "agent": "00000000-0000-4000-8000-0000000000c1",
+          "attended": true,
+          "where": "dm"
+        },
+        "args": {
+          "path": "~/repos/project/out/report.txt",
+          "maxBytes": 1048576
+        }
+      },
+      "cancel": {
+        "t": "call",
+        "id": "c-cancel",
+        "op": "cancel.v1",
+        "effect_id": "eff_cance1m4n6p8r0s2t4v6x8yz",
+        "deadline": 1761300010000,
+        "generation": 3,
+        "grant": null,
+        "origin": {
+          "conversation": "00000000-0000-4000-8000-0000000000d1",
+          "turn": "inp_0001",
+          "person": "00000000-0000-4000-8000-0000000000b1",
+          "agent": "00000000-0000-4000-8000-0000000000c1",
+          "attended": true,
+          "where": "dm"
+        },
+        "args": {
+          "target": "eff_q3vjz7k2m4n6p8r0s2t4v6x8yz"
+        }
+      }
+    },
+    "result": {
+      "accepted": {
+        "t": "result",
+        "id": "c-exec",
+        "ok": true,
+        "data": {
+          "effect_id": "eff_q3vjz7k2m4n6p8r0s2t4v6x8yz",
+          "state": "running",
+          "effective": {
+            "network": "off",
+            "write": ["~/repos/project/a", "~/repos/project/build"],
+            "maxSeconds": 120,
+            "outputBytes": 65536
+          }
+        }
+      },
+      "known_done": {
+        "t": "result",
+        "id": "c-exec-again",
+        "ok": true,
+        "data": {
+          "effect_id": "eff_q3vjz7k2m4n6p8r0s2t4v6x8yz",
+          "state": "done",
+          "exit": 0,
+          "signal": null,
+          "stdout": " M src/a.ts\n?? notes/\n",
+          "stderr": "",
+          "redacted": {
+            "stdout": 0,
+            "stderr": 0
+          },
+          "truncated": false,
+          "bytes": {
+            "stdout": 22,
+            "stderr": 0
+          },
+          "sha256": {
+            "stdout": "7368fd30529c95f0a994d0000b67d454a6bb1c1c67bfac25ad1047e8a8328d25",
+            "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "startedAt": 1761300000120,
+          "endedAt": 1761300003320,
+          "grant": null,
+          "reason": null
+        }
+      },
+      "refused": {
+        "unsupported": {
+          "t": "result",
+          "id": "c-unsupported",
+          "ok": false,
+          "error": {
+            "code": "unsupported",
+            "message": "this node does not do that"
+          }
+        },
+        "bad_request": {
+          "t": "result",
+          "id": "c-bad_request",
+          "ok": false,
+          "error": {
+            "code": "bad_request",
+            "message": "no effect id, deadline or origin"
+          }
+        },
+        "exec_off": {
+          "t": "result",
+          "id": "c-exec_off",
+          "ok": false,
+          "error": {
+            "code": "exec_off",
+            "message": "exec is off on this machine",
+            "data": {
+              "reason": "no_ceiling"
+            }
+          }
+        },
+        "retired": {
+          "t": "result",
+          "id": "c-retired",
+          "ok": false,
+          "error": {
+            "code": "retired",
+            "message": "this machine is retired: pair it again on the machine"
+          }
+        },
+        "clock_skew": {
+          "t": "result",
+          "id": "c-clock_skew",
+          "ok": false,
+          "error": {
+            "code": "clock_skew",
+            "message": "this machine's clock is off from LB's by more than 30 s"
+          }
+        },
+        "stale_generation": {
+          "t": "result",
+          "id": "c-stale_generation",
+          "ok": false,
+          "error": {
+            "code": "stale_generation",
+            "message": "the call's generation is not this machine's"
+          }
+        },
+        "deadline_passed": {
+          "t": "result",
+          "id": "c-deadline_passed",
+          "ok": false,
+          "error": {
+            "code": "deadline_passed",
+            "message": "the deadline has passed"
+          }
+        },
+        "deadline_too_far": {
+          "t": "result",
+          "id": "c-deadline_too_far",
+          "ok": false,
+          "error": {
+            "code": "deadline_too_far",
+            "message": "the deadline is further than the ceiling allows"
+          }
+        },
+        "over_ceiling": {
+          "t": "result",
+          "id": "c-over_ceiling",
+          "ok": false,
+          "error": {
+            "code": "over_ceiling",
+            "message": "asks for more than this machine's ceiling"
+          }
+        },
+        "never": {
+          "t": "result",
+          "id": "c-never",
+          "ok": false,
+          "error": {
+            "code": "never",
+            "message": "this command is never run here"
+          }
+        },
+        "needs_grant": {
+          "t": "result",
+          "id": "c-needs_grant",
+          "ok": false,
+          "error": {
+            "code": "needs_grant",
+            "message": "needs the owner's grant",
+            "data": {
+              "tier": "grant",
+              "commandHash": "8b357d41b7584b0c702704d04a268bd5da4b2b873fd8af84733253fa6ec99ab7",
+              "maxMinutes": 30,
+              "window": true
+            }
+          }
+        },
+        "grant_invalid": {
+          "t": "result",
+          "id": "c-grant_invalid",
+          "ok": false,
+          "error": {
+            "code": "grant_invalid",
+            "message": "the grant is expired, used, or for something else"
+          }
+        },
+        "widen_disabled": {
+          "t": "result",
+          "id": "c-widen_disabled",
+          "ok": false,
+          "error": {
+            "code": "widen_disabled",
+            "message": "widening on a grant is off on this machine"
+          }
+        },
+        "not_owner": {
+          "t": "result",
+          "id": "c-not_owner",
+          "ok": false,
+          "error": {
+            "code": "not_owner",
+            "message": "not for this machine's owner"
+          }
+        },
+        "unattended": {
+          "t": "result",
+          "id": "c-unattended",
+          "ok": false,
+          "error": {
+            "code": "unattended",
+            "message": "not in an unattended turn"
+          }
+        },
+        "busy": {
+          "t": "result",
+          "id": "c-busy",
+          "ok": false,
+          "error": {
+            "code": "busy",
+            "message": "too many running"
+          }
+        },
+        "runner_unavailable": {
+          "t": "result",
+          "id": "c-runner_unavailable",
+          "ok": false,
+          "error": {
+            "code": "runner_unavailable",
+            "message": "the runner cannot be reached"
+          }
+        },
+        "sandbox_unavailable": {
+          "t": "result",
+          "id": "c-sandbox_unavailable",
+          "ok": false,
+          "error": {
+            "code": "sandbox_unavailable",
+            "message": "the sandbox does not start"
+          }
+        },
+        "path_outside": {
+          "t": "result",
+          "id": "c-path_outside",
+          "ok": false,
+          "error": {
+            "code": "path_outside",
+            "message": "outside the roots"
+          }
+        },
+        "path_denied": {
+          "t": "result",
+          "id": "c-path_denied",
+          "ok": false,
+          "error": {
+            "code": "path_denied",
+            "message": "on the deny list or through a symlink"
+          }
+        },
+        "too_large": {
+          "t": "result",
+          "id": "c-too_large",
+          "ok": false,
+          "error": {
+            "code": "too_large",
+            "message": "the file is too large"
+          }
+        },
+        "effect_conflict": {
+          "t": "result",
+          "id": "c-effect_conflict",
+          "ok": false,
+          "error": {
+            "code": "effect_conflict",
+            "message": "this effect id was used with other arguments"
+          }
+        }
+      }
+    },
+    "effect": {
+      "done": {
+        "t": "effect",
+        "effect_id": "eff_q3vjz7k2m4n6p8r0s2t4v6x8yz",
+        "state": "done",
+        "exit": 0,
+        "signal": null,
+        "stdout": " M src/a.ts\n?? notes/\n",
+        "stderr": "",
+        "redacted": {
+          "stdout": 0,
+          "stderr": 0
+        },
+        "truncated": false,
+        "bytes": {
+          "stdout": 22,
+          "stderr": 0
+        },
+        "sha256": {
+          "stdout": "7368fd30529c95f0a994d0000b67d454a6bb1c1c67bfac25ad1047e8a8328d25",
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "startedAt": 1761300000120,
+        "endedAt": 1761300003320,
+        "grant": null,
+        "reason": null
+      },
+      "done_nonzero": {
+        "t": "effect",
+        "effect_id": "eff_a1b2c3d4e5f6g7h2i3j4k5l6mn",
+        "state": "done",
+        "exit": 2,
+        "signal": null,
+        "stdout": "token=[REDACTED]\n",
+        "stderr": "make: *** [all] Error 2\n",
+        "redacted": {
+          "stdout": 1,
+          "stderr": 0
+        },
+        "truncated": false,
+        "bytes": {
+          "stdout": 27,
+          "stderr": 24
+        },
+        "sha256": {
+          "stdout": "6f878ef066794d2e71b92b9d70e321cf7cbd1d0361168fca105df2b87e7a3b9a",
+          "stderr": "0ae884436a469a5e08ed8e1357c6f5775f57300bc20fab0742371bf4753f4a39"
+        },
+        "startedAt": 1761300000100,
+        "endedAt": 1761300005100,
+        "grant": "gr_0001",
+        "reason": null
+      },
+      "failed": {
+        "t": "effect",
+        "effect_id": "eff_q3vjz7k2m4n6p8r0s2t4v6x8yz",
+        "state": "failed",
+        "exit": null,
+        "signal": null,
+        "stdout": "",
+        "stderr": "",
+        "redacted": {
+          "stdout": 0,
+          "stderr": 0
+        },
+        "truncated": false,
+        "bytes": {
+          "stdout": 0,
+          "stderr": 0
+        },
+        "sha256": {
+          "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "startedAt": 1761300000120,
+        "endedAt": 1761300000400,
+        "grant": null,
+        "reason": "runner_protocol"
+      },
+      "timeout": {
+        "t": "effect",
+        "effect_id": "eff_q3vjz7k2m4n6p8r0s2t4v6x8yz",
+        "state": "timeout",
+        "exit": null,
+        "signal": "SIGKILL",
+        "stdout": "step 1\nstep 2\n",
+        "stderr": "",
+        "redacted": {
+          "stdout": 0,
+          "stderr": 0
+        },
+        "truncated": false,
+        "bytes": {
+          "stdout": 14,
+          "stderr": 0
+        },
+        "sha256": {
+          "stdout": "d26ce1f6dc3fe079724fe9bab06f233e0c792e4728a4e6d1d5d932c81e0e8792",
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "startedAt": 1761300000120,
+        "endedAt": 1761300120000,
+        "grant": null,
+        "reason": "deadline"
+      },
+      "cancelled": {
+        "t": "effect",
+        "effect_id": "eff_q3vjz7k2m4n6p8r0s2t4v6x8yz",
+        "state": "cancelled",
+        "exit": null,
+        "signal": "SIGTERM",
+        "stdout": "",
+        "stderr": "",
+        "redacted": {
+          "stdout": 0,
+          "stderr": 0
+        },
+        "truncated": false,
+        "bytes": {
+          "stdout": 0,
+          "stderr": 0
+        },
+        "sha256": {
+          "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "startedAt": 1761300000120,
+        "endedAt": 1761300009000,
+        "grant": null,
+        "reason": "generation_changed"
+      },
+      "unknown": {
+        "t": "effect",
+        "effect_id": "eff_q3vjz7k2m4n6p8r0s2t4v6x8yz",
+        "state": "unknown",
+        "exit": null,
+        "signal": null,
+        "stdout": "",
+        "stderr": "",
+        "redacted": {
+          "stdout": 0,
+          "stderr": 0
+        },
+        "truncated": false,
+        "bytes": {
+          "stdout": 0,
+          "stderr": 0
+        },
+        "sha256": {
+          "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "startedAt": 1761300000120,
+        "endedAt": 1761300600000,
+        "grant": null,
+        "reason": "collector_restart"
+      }
+    },
+    "effect_ack": {
+      "t": "effect_ack",
+      "effect_id": "eff_q3vjz7k2m4n6p8r0s2t4v6x8yz"
+    },
+    "chunk": {
+      "upload": {
+        "t": "chunk",
+        "effect_id": "eff_upl0ad2m4n6p8r0s2t4v6x8yz",
+        "node": "00000000-0000-4000-8000-00000000000a",
+        "seq": 0,
+        "data": "YSxiCjEsMgozLDQ=",
+        "last": true
+      },
+      "download": {
+        "t": "chunk",
+        "effect_id": "eff_d0wnl0ad6p8r0s2t4v6x8y2ab",
+        "node": "00000000-0000-4000-8000-00000000000a",
+        "seq": 0,
+        "data": "56ys5LiA5q61Cg==",
+        "last": false
+      }
+    }
+  },
+  "hashes": {
+    "argsHash": [
+      {
+        "op": "exec.v1",
+        "args": {
+          "argv": ["git", "status", "--short"],
+          "cwd": "~/repos/project",
+          "shell": false,
+          "stdin": null,
+          "env": {},
+          "policy": {
+            "network": "off",
+            "write": ["~/repos/project/build", "~/repos/project/a"]
+          }
+        },
+        "canonical": "{\"args\":{\"argv\":[\"git\",\"status\",\"--short\"],\"cwd\":\"~/repos/project\",\"env\":{},\"policy\":{\"network\":\"off\",\"write\":[\"~/repos/project/a\",\"~/repos/project/build\"]},\"shell\":false,\"stdin\":null},\"op\":\"exec.v1\"}",
+        "sha256": "f87d165841b69f1784538711b718130d95c5ad45798312f70e852e39489a5787"
+      },
+      {
+        "op": "exec.v1",
+        "args": {
+          "argv": ["/bin/sh", "-c", "echo \"标记\" > out.txt\ncat out.txt"],
+          "cwd": "~/repos/工程",
+          "shell": true,
+          "stdin": "第一行\n\"引号\"\t制表\n",
+          "env": {
+            "TERM": "dumb",
+            "LANG": "zh_CN.UTF-8"
+          },
+          "policy": {
+            "network": "proxy",
+            "write": ["~/repos/工程"]
+          }
+        },
+        "canonical": "{\"args\":{\"argv\":[\"/bin/sh\",\"-c\",\"echo \\\"标记\\\" > out.txt\\ncat out.txt\"],\"cwd\":\"~/repos/工程\",\"env\":{\"LANG\":\"zh_CN.UTF-8\",\"TERM\":\"dumb\"},\"policy\":{\"network\":\"proxy\",\"write\":[\"~/repos/工程\"]},\"shell\":true,\"stdin\":\"第一行\\n\\\"引号\\\"\\t制表\\n\"},\"op\":\"exec.v1\"}",
+        "sha256": "db38f708620361246f85df3bb9b45b34182d50d32b3032cdb61cf3f19d285e4d"
+      },
+      {
+        "op": "upload.v1",
+        "args": {
+          "path": "~/repos/project/in/data.csv",
+          "size": 11,
+          "sha256": "0c7519a734cd41ac2c8fcc599c713091d0dddb2ccd90ecad7f30e4d9575aed40",
+          "mode": "0644",
+          "overwrite": false
+        },
+        "canonical": "{\"args\":{\"mode\":\"0644\",\"overwrite\":false,\"path\":\"~/repos/project/in/data.csv\",\"sha256\":\"0c7519a734cd41ac2c8fcc599c713091d0dddb2ccd90ecad7f30e4d9575aed40\",\"size\":11},\"op\":\"upload.v1\"}",
+        "sha256": "f605b13cc132c7d600c891670dff91138d2b1382c0364a3dbcba902e3758f5b6"
+      },
+      {
+        "op": "download.v1",
+        "args": {
+          "path": "~/repos/project/out/report.txt",
+          "maxBytes": 1048576
+        },
+        "canonical": "{\"args\":{\"maxBytes\":1048576,\"path\":\"~/repos/project/out/report.txt\"},\"op\":\"download.v1\"}",
+        "sha256": "dd20a92343d0eb442974766790f7f2103af6e993602f6456f769099ad092c9ef"
+      },
+      {
+        "op": "cancel.v1",
+        "args": {
+          "target": "eff_q3vjz7k2m4n6p8r0s2t4v6x8yz"
+        },
+        "canonical": "{\"args\":{\"target\":\"eff_q3vjz7k2m4n6p8r0s2t4v6x8yz\"},\"op\":\"cancel.v1\"}",
+        "sha256": "3cc91e179873616fd5c944594a410d7d9bdeba8f258af4122cb3da6e0db3961b"
+      }
+    ],
+    "commandHash": [
+      {
+        "command": {
+          "argv": ["git", "status", "--short"],
+          "cwd": "~/repos/project",
+          "shell": false,
+          "network": "off",
+          "write": ["~/repos/project/build", "~/repos/project/a"]
+        },
+        "canonical": "{\"argv\":[\"git\",\"status\",\"--short\"],\"cwd\":\"~/repos/project\",\"network\":\"off\",\"shell\":false,\"write\":[\"~/repos/project/a\",\"~/repos/project/build\"]}",
+        "sha256": "d81e9d122b84af961eff847122355619c081f6b7b88d092ea8793ab224467128"
+      },
+      {
+        "command": {
+          "argv": ["/bin/sh", "-c", "echo \"标记\" > out.txt\ncat out.txt"],
+          "cwd": "~/repos/工程",
+          "shell": true,
+          "network": "proxy",
+          "write": ["~/repos/工程"]
+        },
+        "canonical": "{\"argv\":[\"/bin/sh\",\"-c\",\"echo \\\"标记\\\" > out.txt\\ncat out.txt\"],\"cwd\":\"~/repos/工程\",\"network\":\"proxy\",\"shell\":true,\"write\":[\"~/repos/工程\"]}",
+        "sha256": "8b357d41b7584b0c702704d04a268bd5da4b2b873fd8af84733253fa6ec99ab7"
+      },
+      {
+        "command": {
+          "argv": ["ls", "-la"],
+          "cwd": "/tmp/x",
+          "shell": false,
+          "network": "off",
+          "write": []
+        },
+        "canonical": "{\"argv\":[\"ls\",\"-la\"],\"cwd\":\"/tmp/x\",\"network\":\"off\",\"shell\":false,\"write\":[]}",
+        "sha256": "397cfd094231440edfa7c0b9ff8cdf33163127b3f75747f008396737c8ef6fa9"
+      }
+    ]
+  },
+  "box": {
+    "contract": "s7-box: the Box and its install cell on exec.v1 (LB docs/design/s7-box.md)",
+    "notes": [
+      "这一节是 s7-box 加的，和上面 B 的样例分开，好和 agents-io-herdr 的那份对着 diff。两边读法同上。",
+      "Box 上 exec.v1 的 args 多一个 box（进 argsHash，照上面的 canonical 规则）：{person, tool:{name, version, tree, dir}}。argv[0] 是裸入口名；cwd 是 ~ 或 ~/<相对路径>；policy.network 一律 off；policy.write 是 [\"~\"]（manifest personDir rw）或 []（ro）；env 一律 {}，shell 一律 false。",
+      "Box 上 origin.person 等于 box.person（这一轮服务的人，不是节点主人）；节点不比 origin.person 和节点主人。",
+      "安装格上 exec.v1 的 argv 一律 [\"box-install\", <step>]，cwd \"/\"，env {}，stdin null，policy.write []；其余只在 box.install。network：install、lock 是 open，smoke、commit 是 off。origin.person 是节点主人（登记它的管理员），where dm，attended true，turn 是 LB 自己起的名字（box-tool:<申请 id>:<第几次>、box-lock:<tree>:<uuid>）。",
+      "network open 只在安装格（box-install preset）上允许；别处一律 over_ceiling。",
+      "upload.v1 和 download.v1：节点先在 result 里收下（ok，data {effect_id, state: running}）或拒绝（error.code，下面 refusals 和上面的码）。upload：LB 收到 result 后按 chunk 发（seq 从 0，最后一块 last: true；空文件是一块空的 last），节点写好以后发 effect（done，data {path, size, sha256}）；写不成发 failed，reason 写原因（exists、size_mismatch、sha256_mismatch…）。download：节点发 chunk（seq 从 0，最后一块 last: true），全部发完再发 effect（done，data {path, size, sha256}）。",
+      "安装格的 .incoming/ 按内容命名：install 的 tar 是 <tarSha256>.tar，lock 的输入是 <tarSha256>.requirements.in（lock 时 box.install.tarSha256 是 requirements.in 的 sha256）。同名就是同样的内容：upload 回 exists，LB 当作已经在了；box-install 用前再核对一次 sha256。",
+      "lock 的锁文件全文在 effect 的 stdout：每个依赖的 --hash=sha256:<hex> 不能被脱敏掉。",
+      "Box 上的文件二进制原样、不脱敏；单个最大 20 MiB；路径相对、不以 / 或 ~ 开头、没有空段、.、..、NUL，最长 512 字节。"
+    ],
+    "refusals": ["not_found", "tool_mismatch", "exists", "use_relative_path"],
+    "limits": {
+      "fileBytes": 20971520,
+      "pathBytes": 512,
+      "maxSeconds": 1800
+    },
+    "frames": {
+      "call": {
+        "exec_box": {
+          "t": "call",
+          "id": "c-box-exec",
+          "op": "exec.v1",
+          "effect_id": "eff_b0xexec2m4n6p8r0s2t4v6x8y",
+          "deadline": 1761300300000,
+          "generation": 1,
+          "grant": null,
+          "origin": {
+            "conversation": "00000000-0000-4000-8000-0000000000d3",
+            "agent": "00000000-0000-4000-8000-0000000000c1",
+            "attended": true,
+            "where": "dm",
+            "turn": "00000000-0000-4000-8000-0000000000d3:inp_0101",
+            "person": "00000000-0000-4000-8000-0000000000b2"
+          },
+          "args": {
+            "argv": ["sheet", "import", "inbox/2026-10.csv"],
+            "cwd": "~",
+            "shell": false,
+            "stdin": null,
+            "env": {},
+            "policy": {
+              "network": "off",
+              "write": ["~"]
+            },
+            "box": {
+              "person": "00000000-0000-4000-8000-0000000000b2",
+              "tool": {
+                "name": "sheet",
+                "version": "0.1.0",
+                "tree": "9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e",
+                "dir": "sheet/0.1.0-9f2c4e1a7b3d"
+              }
+            }
+          }
+        },
+        "exec_box_readonly": {
+          "t": "call",
+          "id": "c-box-exec-ro",
+          "op": "exec.v1",
+          "effect_id": "eff_b0xread2m4n6p8r0s2t4v6x8y",
+          "deadline": 1761300300000,
+          "generation": 1,
+          "grant": null,
+          "origin": {
+            "conversation": "00000000-0000-4000-8000-0000000000d3",
+            "agent": "00000000-0000-4000-8000-0000000000c1",
+            "attended": true,
+            "where": "dm",
+            "turn": "00000000-0000-4000-8000-0000000000d3:inp_0101",
+            "person": "00000000-0000-4000-8000-0000000000b2"
+          },
+          "args": {
+            "argv": ["sheet", "report", "--month", "2026-10"],
+            "cwd": "~/out",
+            "shell": false,
+            "stdin": "{\"rows\":2}\n",
+            "env": {},
+            "policy": {
+              "network": "off",
+              "write": []
+            },
+            "box": {
+              "person": "00000000-0000-4000-8000-0000000000b2",
+              "tool": {
+                "name": "sheet",
+                "version": "0.1.0",
+                "tree": "9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e",
+                "dir": "sheet/0.1.0-9f2c4e1a7b3d"
+              }
+            }
+          }
+        },
+        "upload_staging": {
+          "t": "call",
+          "id": "c-box-upload-staging",
+          "op": "upload.v1",
+          "effect_id": "eff_b0xstag2m4n6p8r0s2t4v6x8y",
+          "deadline": 1761300120000,
+          "generation": 1,
+          "grant": null,
+          "origin": {
+            "conversation": "00000000-0000-4000-8000-0000000000d3",
+            "agent": "00000000-0000-4000-8000-0000000000c1",
+            "attended": true,
+            "where": "dm",
+            "turn": "box-tool:00000000-0000-4000-8000-0000000000e1:1",
+            "person": "00000000-0000-4000-8000-0000000000a1"
+          },
+          "args": {
+            "box": {
+              "staging": true
+            },
+            "path": "5d41402abc4b2a76b9719d911017c592ae2ee3a5ec8f3d6b2f1e9c0a7b6d4e21.tar",
+            "size": 10240,
+            "sha256": "5d41402abc4b2a76b9719d911017c592ae2ee3a5ec8f3d6b2f1e9c0a7b6d4e21"
+          }
+        },
+        "exec_install": {
+          "t": "call",
+          "id": "c-box-install",
+          "op": "exec.v1",
+          "effect_id": "eff_b0xinst2m4n6p8r0s2t4v6x8y",
+          "deadline": 1761300900000,
+          "generation": 1,
+          "grant": null,
+          "origin": {
+            "conversation": "00000000-0000-4000-8000-0000000000d3",
+            "agent": "00000000-0000-4000-8000-0000000000c1",
+            "attended": true,
+            "where": "dm",
+            "turn": "box-tool:00000000-0000-4000-8000-0000000000e1:1",
+            "person": "00000000-0000-4000-8000-0000000000a1"
+          },
+          "args": {
+            "argv": ["box-install", "install"],
+            "cwd": "/",
+            "shell": false,
+            "stdin": null,
+            "env": {},
+            "policy": {
+              "network": "open",
+              "write": []
+            },
+            "box": {
+              "install": {
+                "step": "install",
+                "name": "sheet",
+                "version": "0.1.0",
+                "tree": "9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e",
+                "tarSha256": "5d41402abc4b2a76b9719d911017c592ae2ee3a5ec8f3d6b2f1e9c0a7b6d4e21"
+              }
+            }
+          }
+        },
+        "exec_smoke": {
+          "t": "call",
+          "id": "c-box-smoke",
+          "op": "exec.v1",
+          "effect_id": "eff_b0xsmok2m4n6p8r0s2t4v6x8y",
+          "deadline": 1761300300000,
+          "generation": 1,
+          "grant": null,
+          "origin": {
+            "conversation": "00000000-0000-4000-8000-0000000000d3",
+            "agent": "00000000-0000-4000-8000-0000000000c1",
+            "attended": true,
+            "where": "dm",
+            "turn": "box-tool:00000000-0000-4000-8000-0000000000e1:1",
+            "person": "00000000-0000-4000-8000-0000000000a1"
+          },
+          "args": {
+            "argv": ["box-install", "smoke"],
+            "cwd": "/",
+            "shell": false,
+            "stdin": null,
+            "env": {},
+            "policy": {
+              "network": "off",
+              "write": []
+            },
+            "box": {
+              "install": {
+                "step": "smoke",
+                "name": "sheet",
+                "version": "0.1.0",
+                "tree": "9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e",
+                "tarSha256": "5d41402abc4b2a76b9719d911017c592ae2ee3a5ec8f3d6b2f1e9c0a7b6d4e21"
+              }
+            }
+          }
+        },
+        "exec_commit": {
+          "t": "call",
+          "id": "c-box-commit",
+          "op": "exec.v1",
+          "effect_id": "eff_b0xcomm2m4n6p8r0s2t4v6x8y",
+          "deadline": 1761300120000,
+          "generation": 1,
+          "grant": null,
+          "origin": {
+            "conversation": "00000000-0000-4000-8000-0000000000d3",
+            "agent": "00000000-0000-4000-8000-0000000000c1",
+            "attended": true,
+            "where": "dm",
+            "turn": "box-tool:00000000-0000-4000-8000-0000000000e1:1",
+            "person": "00000000-0000-4000-8000-0000000000a1"
+          },
+          "args": {
+            "argv": ["box-install", "commit"],
+            "cwd": "/",
+            "shell": false,
+            "stdin": null,
+            "env": {},
+            "policy": {
+              "network": "off",
+              "write": []
+            },
+            "box": {
+              "install": {
+                "step": "commit",
+                "name": "sheet",
+                "version": "0.1.0",
+                "tree": "9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e",
+                "tarSha256": "5d41402abc4b2a76b9719d911017c592ae2ee3a5ec8f3d6b2f1e9c0a7b6d4e21"
+              }
+            }
+          }
+        },
+        "upload_requirements": {
+          "t": "call",
+          "id": "c-box-upload-req",
+          "op": "upload.v1",
+          "effect_id": "eff_b0xreqs2m4n6p8r0s2t4v6x8y",
+          "deadline": 1761300120000,
+          "generation": 1,
+          "grant": null,
+          "origin": {
+            "conversation": "00000000-0000-4000-8000-0000000000d3",
+            "agent": "00000000-0000-4000-8000-0000000000c1",
+            "attended": true,
+            "where": "dm",
+            "turn": "box-lock:9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e:00000000-0000-4000-8000-0000000000e2",
+            "person": "00000000-0000-4000-8000-0000000000a1"
+          },
+          "args": {
+            "box": {
+              "staging": true
+            },
+            "path": "f2b17ca774e804040fe16e1bc545729ae2dc5daed5b8a6f016b7c56a54eaa7f1.requirements.in",
+            "size": 17,
+            "sha256": "f2b17ca774e804040fe16e1bc545729ae2dc5daed5b8a6f016b7c56a54eaa7f1"
+          }
+        },
+        "exec_lock": {
+          "t": "call",
+          "id": "c-box-lock",
+          "op": "exec.v1",
+          "effect_id": "eff_b0xlock2m4n6p8r0s2t4v6x8y",
+          "deadline": 1761300300000,
+          "generation": 1,
+          "grant": null,
+          "origin": {
+            "conversation": "00000000-0000-4000-8000-0000000000d3",
+            "agent": "00000000-0000-4000-8000-0000000000c1",
+            "attended": true,
+            "where": "dm",
+            "turn": "box-lock:9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e:00000000-0000-4000-8000-0000000000e2",
+            "person": "00000000-0000-4000-8000-0000000000a1"
+          },
+          "args": {
+            "argv": ["box-install", "lock"],
+            "cwd": "/",
+            "shell": false,
+            "stdin": null,
+            "env": {},
+            "policy": {
+              "network": "open",
+              "write": []
+            },
+            "box": {
+              "install": {
+                "step": "lock",
+                "name": "sheet",
+                "version": "0.1.0",
+                "tree": "9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e",
+                "tarSha256": "f2b17ca774e804040fe16e1bc545729ae2dc5daed5b8a6f016b7c56a54eaa7f1"
+              }
+            }
+          }
+        },
+        "upload_person": {
+          "t": "call",
+          "id": "c-box-upload",
+          "op": "upload.v1",
+          "effect_id": "eff_b0xupl02m4n6p8r0s2t4v6x8y",
+          "deadline": 1761300060000,
+          "generation": 1,
+          "grant": null,
+          "origin": {
+            "conversation": "00000000-0000-4000-8000-0000000000d3",
+            "agent": "00000000-0000-4000-8000-0000000000c1",
+            "attended": true,
+            "where": "dm",
+            "turn": "00000000-0000-4000-8000-0000000000d3:inp_0101",
+            "person": "00000000-0000-4000-8000-0000000000b2"
+          },
+          "args": {
+            "box": {
+              "person": "00000000-0000-4000-8000-0000000000b2"
+            },
+            "path": "inbox/2026-10.csv",
+            "size": 11,
+            "sha256": "0c7519a734cd41ac2c8fcc599c713091d0dddb2ccd90ecad7f30e4d9575aed40"
+          }
+        },
+        "download_person": {
+          "t": "call",
+          "id": "c-box-download",
+          "op": "download.v1",
+          "effect_id": "eff_b0xdown2m4n6p8r0s2t4v6x8y",
+          "deadline": 1761300060000,
+          "generation": 1,
+          "grant": null,
+          "origin": {
+            "conversation": "00000000-0000-4000-8000-0000000000d3",
+            "agent": "00000000-0000-4000-8000-0000000000c1",
+            "attended": true,
+            "where": "dm",
+            "turn": "00000000-0000-4000-8000-0000000000d3:inp_0101",
+            "person": "00000000-0000-4000-8000-0000000000b2"
+          },
+          "args": {
+            "box": {
+              "person": "00000000-0000-4000-8000-0000000000b2"
+            },
+            "path": "out/2026-10.csv"
+          }
+        }
+      },
+      "result": {
+        "accepted_box": {
+          "t": "result",
+          "id": "c-box-exec",
+          "ok": true,
+          "data": {
+            "effect_id": "eff_b0xexec2m4n6p8r0s2t4v6x8y",
+            "state": "running",
+            "effective": {
+              "network": "off",
+              "write": ["~"],
+              "maxSeconds": 300,
+              "outputBytes": 262144
+            }
+          }
+        },
+        "accepted_install": {
+          "t": "result",
+          "id": "c-box-install",
+          "ok": true,
+          "data": {
+            "effect_id": "eff_b0xinst2m4n6p8r0s2t4v6x8y",
+            "state": "running",
+            "effective": {
+              "network": "open",
+              "write": [],
+              "maxSeconds": 900,
+              "outputBytes": 262144
+            }
+          }
+        },
+        "accepted_transfer": {
+          "t": "result",
+          "id": "c-box-upload",
+          "ok": true,
+          "data": {
+            "effect_id": "eff_b0xupl02m4n6p8r0s2t4v6x8y",
+            "state": "running"
+          }
+        },
+        "refused": {
+          "not_found": {
+            "t": "result",
+            "id": "c-box-not_found",
+            "ok": false,
+            "error": {
+              "code": "not_found",
+              "message": "no directory for this person on the Box"
+            }
+          },
+          "tool_mismatch": {
+            "t": "result",
+            "id": "c-box-tool_mismatch",
+            "ok": false,
+            "error": {
+              "code": "tool_mismatch",
+              "message": "the installed version's tree is not the one asked"
+            }
+          },
+          "exists": {
+            "t": "result",
+            "id": "c-box-exists",
+            "ok": false,
+            "error": {
+              "code": "exists",
+              "message": "already there: nothing is overwritten"
+            }
+          },
+          "use_relative_path": {
+            "t": "result",
+            "id": "c-box-use_relative_path",
+            "ok": false,
+            "error": {
+              "code": "use_relative_path",
+              "message": "an argument starts with ~ or holds =~"
+            }
+          }
+        }
+      },
+      "effect": {
+        "upload_done": {
+          "t": "effect",
+          "state": "done",
+          "exit": 0,
+          "signal": null,
+          "stdout": "",
+          "stderr": "",
+          "redacted": {
+            "stdout": 0,
+            "stderr": 0
+          },
+          "truncated": false,
+          "bytes": {
+            "stdout": 0,
+            "stderr": 0
+          },
+          "sha256": {
+            "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "startedAt": 1761300000120,
+          "endedAt": 1761300000900,
+          "grant": null,
+          "reason": null,
+          "effect_id": "eff_b0xupl02m4n6p8r0s2t4v6x8y",
+          "data": {
+            "path": "inbox/2026-10.csv",
+            "size": 11,
+            "sha256": "0c7519a734cd41ac2c8fcc599c713091d0dddb2ccd90ecad7f30e4d9575aed40"
+          }
+        },
+        "download_done": {
+          "t": "effect",
+          "state": "done",
+          "exit": 0,
+          "signal": null,
+          "stdout": "",
+          "stderr": "",
+          "redacted": {
+            "stdout": 0,
+            "stderr": 0
+          },
+          "truncated": false,
+          "bytes": {
+            "stdout": 0,
+            "stderr": 0
+          },
+          "sha256": {
+            "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "startedAt": 1761300000120,
+          "endedAt": 1761300000900,
+          "grant": null,
+          "reason": null,
+          "effect_id": "eff_b0xdown2m4n6p8r0s2t4v6x8y",
+          "data": {
+            "path": "out/2026-10.csv",
+            "size": 26,
+            "sha256": "7b297c20dbbc2f6fbd532cfe36fa105e1339485d4cdd58a670a68ff2db18ef16"
+          }
+        },
+        "lock_done": {
+          "t": "effect",
+          "state": "done",
+          "exit": 0,
+          "signal": null,
+          "stdout": "sheet-dep==1.2.3 \\\n    --hash=sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\n    # via -r requirements.in\n",
+          "stderr": "",
+          "redacted": {
+            "stdout": 0,
+            "stderr": 0
+          },
+          "truncated": false,
+          "bytes": {
+            "stdout": 131,
+            "stderr": 0
+          },
+          "sha256": {
+            "stdout": "99c00d9359e92e44a8071d5a6fcd03bbc4c33fe92f79816cebb9b7ffd93c5ab0",
+            "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "startedAt": 1761300000120,
+          "endedAt": 1761300000900,
+          "grant": null,
+          "reason": null,
+          "effect_id": "eff_b0xlock2m4n6p8r0s2t4v6x8y"
+        },
+        "install_failed": {
+          "t": "effect",
+          "state": "done",
+          "exit": 1,
+          "signal": null,
+          "stdout": "",
+          "stderr": "no wheel for sheet-dep==1.2.3\n",
+          "redacted": {
+            "stdout": 0,
+            "stderr": 0
+          },
+          "truncated": false,
+          "bytes": {
+            "stdout": 0,
+            "stderr": 30
+          },
+          "sha256": {
+            "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "2e24cabdb9c336c3733ed373edc27fb8b505e33ec5018b49758cd518cb8ff3a0"
+          },
+          "startedAt": 1761300000120,
+          "endedAt": 1761300000900,
+          "grant": null,
+          "reason": null,
+          "effect_id": "eff_b0xinst2m4n6p8r0s2t4v6x8y"
+        },
+        "upload_failed": {
+          "t": "effect",
+          "state": "failed",
+          "exit": null,
+          "signal": null,
+          "stdout": "",
+          "stderr": "",
+          "redacted": {
+            "stdout": 0,
+            "stderr": 0
+          },
+          "truncated": false,
+          "bytes": {
+            "stdout": 0,
+            "stderr": 0
+          },
+          "sha256": {
+            "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "startedAt": 1761300000120,
+          "endedAt": 1761300000900,
+          "grant": null,
+          "reason": "sha256_mismatch",
+          "effect_id": "eff_b0xupl02m4n6p8r0s2t4v6x8y"
+        }
+      },
+      "chunk": {
+        "upload_person": {
+          "t": "chunk",
+          "effect_id": "eff_b0xupl02m4n6p8r0s2t4v6x8y",
+          "node": "00000000-0000-4000-8000-00000000000b",
+          "seq": 0,
+          "data": "YSxiCjEsMgozLDQ=",
+          "last": true
+        },
+        "upload_staging": {
+          "t": "chunk",
+          "effect_id": "eff_b0xstag2m4n6p8r0s2t4v6x8y",
+          "node": "00000000-0000-4000-8000-00000000000c",
+          "seq": 0,
+          "data": "dGFy",
+          "last": false
+        },
+        "download_person": {
+          "t": "chunk",
+          "effect_id": "eff_b0xdown2m4n6p8r0s2t4v6x8y",
+          "node": "00000000-0000-4000-8000-00000000000b",
+          "seq": 0,
+          "data": "5pel5pyfLOmHkeminQoxMC0wMSwxMi41MAo=",
+          "last": true
+        }
+      }
+    },
+    "hashes": {
+      "argsHash": [
+        {
+          "op": "exec.v1",
+          "args": {
+            "argv": ["sheet", "import", "inbox/2026-10.csv"],
+            "cwd": "~",
+            "shell": false,
+            "stdin": null,
+            "env": {},
+            "policy": {
+              "network": "off",
+              "write": ["~"]
+            },
+            "box": {
+              "person": "00000000-0000-4000-8000-0000000000b2",
+              "tool": {
+                "name": "sheet",
+                "version": "0.1.0",
+                "tree": "9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e",
+                "dir": "sheet/0.1.0-9f2c4e1a7b3d"
+              }
+            }
+          },
+          "canonical": "{\"args\":{\"argv\":[\"sheet\",\"import\",\"inbox/2026-10.csv\"],\"box\":{\"person\":\"00000000-0000-4000-8000-0000000000b2\",\"tool\":{\"dir\":\"sheet/0.1.0-9f2c4e1a7b3d\",\"name\":\"sheet\",\"tree\":\"9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e\",\"version\":\"0.1.0\"}},\"cwd\":\"~\",\"env\":{},\"policy\":{\"network\":\"off\",\"write\":[\"~\"]},\"shell\":false,\"stdin\":null},\"op\":\"exec.v1\"}",
+          "sha256": "56a33b14b886388bd36903884613c4b8bc888516b8c4c688cd0b92e7061edd93"
+        },
+        {
+          "op": "exec.v1",
+          "args": {
+            "argv": ["sheet", "report", "--month", "2026-10"],
+            "cwd": "~/out",
+            "shell": false,
+            "stdin": "{\"rows\":2}\n",
+            "env": {},
+            "policy": {
+              "network": "off",
+              "write": []
+            },
+            "box": {
+              "person": "00000000-0000-4000-8000-0000000000b2",
+              "tool": {
+                "name": "sheet",
+                "version": "0.1.0",
+                "tree": "9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e",
+                "dir": "sheet/0.1.0-9f2c4e1a7b3d"
+              }
+            }
+          },
+          "canonical": "{\"args\":{\"argv\":[\"sheet\",\"report\",\"--month\",\"2026-10\"],\"box\":{\"person\":\"00000000-0000-4000-8000-0000000000b2\",\"tool\":{\"dir\":\"sheet/0.1.0-9f2c4e1a7b3d\",\"name\":\"sheet\",\"tree\":\"9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e\",\"version\":\"0.1.0\"}},\"cwd\":\"~/out\",\"env\":{},\"policy\":{\"network\":\"off\",\"write\":[]},\"shell\":false,\"stdin\":\"{\\\"rows\\\":2}\\n\"},\"op\":\"exec.v1\"}",
+          "sha256": "43bc9a81135d6cd8e71d6e7f9a0ca98114bff4017c9e32283fef2ac2118cc2fd"
+        },
+        {
+          "op": "upload.v1",
+          "args": {
+            "box": {
+              "staging": true
+            },
+            "path": "5d41402abc4b2a76b9719d911017c592ae2ee3a5ec8f3d6b2f1e9c0a7b6d4e21.tar",
+            "size": 10240,
+            "sha256": "5d41402abc4b2a76b9719d911017c592ae2ee3a5ec8f3d6b2f1e9c0a7b6d4e21"
+          },
+          "canonical": "{\"args\":{\"box\":{\"staging\":true},\"path\":\"5d41402abc4b2a76b9719d911017c592ae2ee3a5ec8f3d6b2f1e9c0a7b6d4e21.tar\",\"sha256\":\"5d41402abc4b2a76b9719d911017c592ae2ee3a5ec8f3d6b2f1e9c0a7b6d4e21\",\"size\":10240},\"op\":\"upload.v1\"}",
+          "sha256": "9636b300053e5a90ca6bf0c8e694afd1fd3a753275403380a6020ca0ed53bf83"
+        },
+        {
+          "op": "exec.v1",
+          "args": {
+            "argv": ["box-install", "install"],
+            "cwd": "/",
+            "shell": false,
+            "stdin": null,
+            "env": {},
+            "policy": {
+              "network": "open",
+              "write": []
+            },
+            "box": {
+              "install": {
+                "step": "install",
+                "name": "sheet",
+                "version": "0.1.0",
+                "tree": "9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e",
+                "tarSha256": "5d41402abc4b2a76b9719d911017c592ae2ee3a5ec8f3d6b2f1e9c0a7b6d4e21"
+              }
+            }
+          },
+          "canonical": "{\"args\":{\"argv\":[\"box-install\",\"install\"],\"box\":{\"install\":{\"name\":\"sheet\",\"step\":\"install\",\"tarSha256\":\"5d41402abc4b2a76b9719d911017c592ae2ee3a5ec8f3d6b2f1e9c0a7b6d4e21\",\"tree\":\"9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e\",\"version\":\"0.1.0\"}},\"cwd\":\"/\",\"env\":{},\"policy\":{\"network\":\"open\",\"write\":[]},\"shell\":false,\"stdin\":null},\"op\":\"exec.v1\"}",
+          "sha256": "7600a2c94e581544ff58d231fa5c1832b1d6d48558df18f653996a238122e6bd"
+        },
+        {
+          "op": "exec.v1",
+          "args": {
+            "argv": ["box-install", "smoke"],
+            "cwd": "/",
+            "shell": false,
+            "stdin": null,
+            "env": {},
+            "policy": {
+              "network": "off",
+              "write": []
+            },
+            "box": {
+              "install": {
+                "step": "smoke",
+                "name": "sheet",
+                "version": "0.1.0",
+                "tree": "9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e",
+                "tarSha256": "5d41402abc4b2a76b9719d911017c592ae2ee3a5ec8f3d6b2f1e9c0a7b6d4e21"
+              }
+            }
+          },
+          "canonical": "{\"args\":{\"argv\":[\"box-install\",\"smoke\"],\"box\":{\"install\":{\"name\":\"sheet\",\"step\":\"smoke\",\"tarSha256\":\"5d41402abc4b2a76b9719d911017c592ae2ee3a5ec8f3d6b2f1e9c0a7b6d4e21\",\"tree\":\"9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e\",\"version\":\"0.1.0\"}},\"cwd\":\"/\",\"env\":{},\"policy\":{\"network\":\"off\",\"write\":[]},\"shell\":false,\"stdin\":null},\"op\":\"exec.v1\"}",
+          "sha256": "56175ba8f122cbd9cf8af55f6b990d0e55f914df4615a439c5ab5284150e39a8"
+        },
+        {
+          "op": "exec.v1",
+          "args": {
+            "argv": ["box-install", "commit"],
+            "cwd": "/",
+            "shell": false,
+            "stdin": null,
+            "env": {},
+            "policy": {
+              "network": "off",
+              "write": []
+            },
+            "box": {
+              "install": {
+                "step": "commit",
+                "name": "sheet",
+                "version": "0.1.0",
+                "tree": "9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e",
+                "tarSha256": "5d41402abc4b2a76b9719d911017c592ae2ee3a5ec8f3d6b2f1e9c0a7b6d4e21"
+              }
+            }
+          },
+          "canonical": "{\"args\":{\"argv\":[\"box-install\",\"commit\"],\"box\":{\"install\":{\"name\":\"sheet\",\"step\":\"commit\",\"tarSha256\":\"5d41402abc4b2a76b9719d911017c592ae2ee3a5ec8f3d6b2f1e9c0a7b6d4e21\",\"tree\":\"9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e\",\"version\":\"0.1.0\"}},\"cwd\":\"/\",\"env\":{},\"policy\":{\"network\":\"off\",\"write\":[]},\"shell\":false,\"stdin\":null},\"op\":\"exec.v1\"}",
+          "sha256": "0be614f124f21d4f27e46aac0162806a4854eb50dce9be133a97137c940d32f8"
+        },
+        {
+          "op": "upload.v1",
+          "args": {
+            "box": {
+              "staging": true
+            },
+            "path": "f2b17ca774e804040fe16e1bc545729ae2dc5daed5b8a6f016b7c56a54eaa7f1.requirements.in",
+            "size": 17,
+            "sha256": "f2b17ca774e804040fe16e1bc545729ae2dc5daed5b8a6f016b7c56a54eaa7f1"
+          },
+          "canonical": "{\"args\":{\"box\":{\"staging\":true},\"path\":\"f2b17ca774e804040fe16e1bc545729ae2dc5daed5b8a6f016b7c56a54eaa7f1.requirements.in\",\"sha256\":\"f2b17ca774e804040fe16e1bc545729ae2dc5daed5b8a6f016b7c56a54eaa7f1\",\"size\":17},\"op\":\"upload.v1\"}",
+          "sha256": "00f0fd926ef7dcd4180abbef10c78b77d8ab537c5791a61c52377f18a94148ae"
+        },
+        {
+          "op": "exec.v1",
+          "args": {
+            "argv": ["box-install", "lock"],
+            "cwd": "/",
+            "shell": false,
+            "stdin": null,
+            "env": {},
+            "policy": {
+              "network": "open",
+              "write": []
+            },
+            "box": {
+              "install": {
+                "step": "lock",
+                "name": "sheet",
+                "version": "0.1.0",
+                "tree": "9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e",
+                "tarSha256": "f2b17ca774e804040fe16e1bc545729ae2dc5daed5b8a6f016b7c56a54eaa7f1"
+              }
+            }
+          },
+          "canonical": "{\"args\":{\"argv\":[\"box-install\",\"lock\"],\"box\":{\"install\":{\"name\":\"sheet\",\"step\":\"lock\",\"tarSha256\":\"f2b17ca774e804040fe16e1bc545729ae2dc5daed5b8a6f016b7c56a54eaa7f1\",\"tree\":\"9f2c4e1a7b3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e\",\"version\":\"0.1.0\"}},\"cwd\":\"/\",\"env\":{},\"policy\":{\"network\":\"open\",\"write\":[]},\"shell\":false,\"stdin\":null},\"op\":\"exec.v1\"}",
+          "sha256": "fe76eca8a9e7eed3132e1278dbed7cdb7ed4e869bcb9c877aa7a3692981b322a"
+        },
+        {
+          "op": "upload.v1",
+          "args": {
+            "box": {
+              "person": "00000000-0000-4000-8000-0000000000b2"
+            },
+            "path": "inbox/2026-10.csv",
+            "size": 11,
+            "sha256": "0c7519a734cd41ac2c8fcc599c713091d0dddb2ccd90ecad7f30e4d9575aed40"
+          },
+          "canonical": "{\"args\":{\"box\":{\"person\":\"00000000-0000-4000-8000-0000000000b2\"},\"path\":\"inbox/2026-10.csv\",\"sha256\":\"0c7519a734cd41ac2c8fcc599c713091d0dddb2ccd90ecad7f30e4d9575aed40\",\"size\":11},\"op\":\"upload.v1\"}",
+          "sha256": "63ab9ea39395bfa943fcda9b415c9aedd588a28cecbd1ea3b0a8d7c4efeef3bb"
+        },
+        {
+          "op": "download.v1",
+          "args": {
+            "box": {
+              "person": "00000000-0000-4000-8000-0000000000b2"
+            },
+            "path": "out/2026-10.csv"
+          },
+          "canonical": "{\"args\":{\"box\":{\"person\":\"00000000-0000-4000-8000-0000000000b2\"},\"path\":\"out/2026-10.csv\"},\"op\":\"download.v1\"}",
+          "sha256": "3e33c60595f5e307116ed96010f593e07e334b905c0a4f14c75b88a8f6e967a9"
+        }
+      ]
+    }
+  }
+}

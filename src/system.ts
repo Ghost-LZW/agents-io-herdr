@@ -8,11 +8,17 @@ export interface ExecResult {
   stderr: string;
 }
 
-export type Exec = (cmd: string, args: string[], timeoutMs?: number) => ExecResult | null;
+/** `input`, when given, is written to the program's stdin: the way to hand it a secret (never in `args`, which `ps` shows). */
+export type Exec = (cmd: string, args: string[], timeoutMs?: number, input?: string) => ExecResult | null;
 
 /** Runs a program without a shell; null when it cannot be started. */
-export const realExec: Exec = (cmd, args, timeoutMs = 30_000) => {
-  const r = spawnSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: timeoutMs });
+export const realExec: Exec = (cmd, args, timeoutMs = 30_000, input) => {
+  const r = spawnSync(cmd, args, {
+    encoding: "utf8",
+    stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+    timeout: timeoutMs,
+    ...(input === undefined ? {} : { input }),
+  });
   if (r.error && (r.error as NodeJS.ErrnoException).code === "ENOENT") return null;
   return { code: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 };

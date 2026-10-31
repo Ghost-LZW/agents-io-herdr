@@ -164,6 +164,21 @@ prints a one-time code (valid 15 minutes, 5 tries). Send it to the bot in a dire
 
 `agents-io-herdr test` sends a test message to check the path end to end.
 
+## Sessions and commands for an assistant server (optional)
+
+Separately from the bridge, `agents-io-herdr sessions` links this machine as a node to LB, a
+self-hosted assistant server it is paired with (`sessions pair --lb-url <url>`). It lists this
+machine's Claude Code / Codex sessions (in herdr, in a plain terminal, headless; running, waiting and
+recently ended) and hands them to LB read only, redacted on the machine; `sessions install` runs the
+collector as the launchd agent `io.agents-io-herdr.sessions`, `sessions off` / `sessions uninstall`
+stop it. See [docs/sessions.md](docs/sessions.md).
+
+With a ceiling file written on the machine (`agents-io-herdr exec ceiling --preset …`), LB may also
+ask it to run commands (`exec.v1`): within what the ceiling allows, inside a deny-by-default sandbox
+(seatbelt on macOS, optionally as a dedicated user; bubblewrap on Linux), each run recorded before it
+starts so it never runs twice, output redacted before it leaves. Without that file nothing runs.
+`agents-io-herdr exec off` stops it at once. See [docs/exec.md](docs/exec.md).
+
 ## Configuration
 
 `~/.config/agents-io-herdr/config.json` (or `$AGENTS_IO_HERDR_CONFIG`); every key is optional.
