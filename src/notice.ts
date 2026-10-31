@@ -288,7 +288,7 @@ export function noticeMessage(n: Notice, v: NoticeView): RenderedMessage {
 /** `status`: every agent in herdr, deterministic, one card. */
 export function statusMessage(o: {
   machine: string;
-  /** All panes, so ids match ls even when a plain terminal shares an agent's short id. */
+  /** All panes; status lists only agents and keeps their full workspace-qualified ids. */
   panes: HerdrAgent[] | null;
   tabs: HerdrTab[];
   error: string | null;
@@ -315,7 +315,7 @@ export function statusMessage(o: {
     const v = views.get(paneKey(a));
     const since = v ? `${v.sinceStart ? "≥" : ""}${s.duration(o.now - v.since)}` : "?";
     return s.statusLine(
-      shortId(a.pane_id, o.panes ?? []),
+      a.pane_id,
       labels.get(a.tab_id ?? "") ?? "",
       placeOf(a),
       agentName(a),

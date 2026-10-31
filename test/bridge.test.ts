@@ -597,8 +597,8 @@ describe("notices and answers", () => {
     expect(card?.message.text).toBe(
       [
         "**my-mac · 2 agents**",
-        "- p1 · ledger · Codex · working · 5 min · fix the parser",
-        "- p2 · api · Claude · idle · 5 min · fix the parser",
+        "- w1:p1 · ledger · Codex · working · 5 min · fix the parser",
+        "- w1:p2 · api · Claude · idle · 5 min · fix the parser",
       ].join("\n"),
     );
     expect(card?.message.sections?.[0]?.text).toBe("sending · quiet hours 23:00-08:00 · notices go to the workbench");
@@ -698,13 +698,13 @@ describe("looking at and driving any pane", () => {
     expect(card?.message.text).toBe(
       [
         "**my-mac · 2 panes**",
-        "- p1 · ledger · Codex · idle · fix the parser",
-        "- p3 · tail · scratch · terminal · zsh",
+        "- w1:p1 · ledger · Codex · idle · fix the parser",
+        "- w1:p3 · tail · scratch · terminal · zsh",
       ].join("\n"),
     );
     expect(card?.message.actions).toEqual([
-      { id: "herdr:view:term_1", label: "View p1" },
-      { id: "herdr:view:term_3", label: "View p3" },
+      { id: "herdr:view:term_1", label: "View w1:p1" },
+      { id: "herdr:view:term_3", label: "View w1:p3" },
     ]);
   });
 

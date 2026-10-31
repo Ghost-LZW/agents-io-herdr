@@ -12,17 +12,7 @@
  */
 import type { HerdrAgent, HerdrTab } from "./herdr.ts";
 import type { Strings } from "./i18n.ts";
-import {
-  ACTION_PREFIX,
-  agentName,
-  BUTTON_LABEL_MAX,
-  clip,
-  fence,
-  placeOf,
-  shortId,
-  tabLabels,
-  titleOf,
-} from "./notice.ts";
+import { ACTION_PREFIX, agentName, BUTTON_LABEL_MAX, clip, fence, placeOf, tabLabels, titleOf } from "./notice.ts";
 import type { RenderedMessage } from "./protocol.ts";
 import type { DialogOption } from "./screen.ts";
 
@@ -145,7 +135,7 @@ export function panesMessage(o: {
   const label = tabLabels(o.tabs);
   const lines = rows.map((p) =>
     s.paneLine(
-      shortId(p.pane_id, rows),
+      p.pane_id,
       label.get(p.tab_id ?? "") ?? "",
       placeOf(p),
       kindOf(p, s),
@@ -155,7 +145,7 @@ export function panesMessage(o: {
   );
   const actions = rows.slice(0, VIEW_BUTTONS_MAX).map((p) => ({
     id: viewAction(p.terminal_id),
-    label: s.viewLabel(shortId(p.pane_id, rows)),
+    label: s.viewLabel(p.pane_id),
   }));
   return { text: `${s.panesHead(o.machine, rows.length)}\n${lines.join("\n")}`, sections: [footer], actions };
 }
