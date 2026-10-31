@@ -1389,6 +1389,21 @@ describe("agents started from a message (spawn)", () => {
     ]);
   });
 
+  it("presses Enter once when the new agent took the first prompt but missed its Enter, and not otherwise", async () => {
+    w.herdr.seq = true;
+    w.herdr.missEnter = 1;
+    await sendItem(w, side({ id: "m1", text: "look", trigger: true }));
+    const sp = w.store.state.spawned[0];
+    const acts = w.herdr.actions.filter(([, p]) => p.target === sp?.paneId).map(([m, p]) => [m, p.keys ?? null]);
+    expect(acts.slice(-2)).toEqual([
+      ["agent.prompt", null],
+      ["agent.send_keys", ["enter"]],
+    ]);
+    expect(w.logs.some((l) => /prompt was not submitted; pressed enter/.test(l))).toBe(true);
+    await sendItem(w, side({ id: "m2", text: "and more", topic: "m1" }));
+    expect(w.herdr.actions.at(-1)?.[0]).toBe("agent.prompt");
+  });
+
   it("with dirPerAgent false, every agent works in the rule's directory, skills linked there once", async () => {
     w.cfg.spawn[0] = { ...(w.cfg.spawn[0] as SpawnRule), dirPerAgent: false };
     await sendItem(w, side({ id: "m1", text: "a", trigger: true }));

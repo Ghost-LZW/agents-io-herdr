@@ -127,6 +127,34 @@ export async function promptAgent(h: Herdr, target: string, text: string): Promi
   await h.call("agent.prompt", { target, text });
 }
 
+/**
+ * A prompt that is surely submitted: a harness that has only just started (or got a long paste)
+ * can take the text and miss its Enter. When herdr sees no change in the agent within `waitMs`,
+ * Enter is pressed once. True when that was needed.
+ */
+export async function submitPrompt(
+  h: Herdr,
+  target: string,
+  text: string,
+  o: { waitMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<boolean> {
+  const sleep = o.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  const get = async () =>
+    (await h.call<{ agent?: { state_change_seq?: number; agent_status?: string } }>("agent.get", { target })).agent;
+  const seq = async () => (await get())?.state_change_seq;
+  const was = await get();
+  const before = was?.state_change_seq;
+  await promptAgent(h, target, text);
+  // A working agent queues the prompt and does not change: nothing to tell from it.
+  if (before === undefined || was?.agent_status === "working") return false;
+  for (let i = 0; i < Math.ceil((o.waitMs ?? 5000) / 500); i++) {
+    await sleep(500);
+    if ((await seq()) !== before) return false;
+  }
+  await sendKeys(h, target, ["enter"]);
+  return true;
+}
+
 export async function sendKeys(h: Herdr, target: string, keys: string[]): Promise<void> {
   await h.call("agent.send_keys", { target, keys });
 }
