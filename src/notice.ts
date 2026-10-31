@@ -5,6 +5,7 @@ import type { Strings } from "./i18n.ts";
 import type { RenderedMessage } from "./protocol.ts";
 import { redact } from "./redact.ts";
 import type { DialogOption } from "./screen.ts";
+import { paneButtons, processAction, screenText, viewAction } from "./terminal-controls.ts";
 import type { Step, Turn } from "./transcript.ts";
 import type { Notice, PaneView } from "./watch.ts";
 import { paneKey } from "./watch.ts";
@@ -182,7 +183,7 @@ export function noticeMessages(n: Notice, v: NoticeView): RenderedMessage[] {
   const title = titleOf(a);
   // A dialog is on the screen, not in the transcript; a finished turn is its answer.
   const answer = n.kind === "done" ? redact(turn.answer).text : "";
-  const shown = answer || (v.screen ? fence(v.screen).slice(1) : "");
+  const shown = answer || (v.screen ? (n.kind === "blocked" ? screenText(v.screen) : fence(v.screen).slice(1)) : "");
   const answerPages = shown ? pages(shown, ANSWER_PAGE_BYTES) : [];
   const tools = turn.steps.filter((x) => x.kind === "tool").length;
   const steps = processPages(turn.steps, s, Math.max(1, MORE_MAX + 1 - answerPages.length));
@@ -190,7 +191,7 @@ export function noticeMessages(n: Notice, v: NoticeView): RenderedMessage[] {
     `**${s.processHead(tools, turn.steps.length)}${steps.length > 1 ? ` (${i + 1}/${steps.length})` : ""}**`;
   const prompt = turn.prompt.trim() ? `${s.asked} ${redact(clip(oneLine(turn.prompt), 200)).text}` : "";
   const footer = v.topic ? s.footerTopic(a.pane_id) : s.footerDm(a.pane_id);
-  const actions = n.kind === "blocked" && v.threadId ? buttons(v.threadId, v.options, s) : undefined;
+  const actions = n.kind === "blocked" ? waitingButtons(a, v.options, s) : undefined;
   const top = [head, title, prompt].filter(Boolean).join("\n");
   const first = answerPages[0] ?? "";
   const main: RenderedMessage = {
@@ -215,14 +216,42 @@ export function noticeMessages(n: Notice, v: NoticeView): RenderedMessage[] {
   return [main, ...more];
 }
 
+/** Every newly rendered waiting card targets the current terminal, including cards in reused topics. */
+function waitingButtons(a: HerdrAgent, options: DialogOption[], s: Strings): RenderedMessage["actions"] {
+  return [
+    ...paneButtons(a.terminal_id, options, s),
+    { id: viewAction(a.terminal_id), label: s.refreshLabel },
+    { id: processAction(a.terminal_id), label: s.processLabel },
+  ];
+}
+
+/** One requested page of the existing, redacted latest-turn view, without copying raw JSONL. */
+export function processMessage(a: HerdrAgent, turn: Turn | null, page: number, s: Strings): RenderedMessage {
+  const steps = turn ? processPages(turn.steps, s, MORE_MAX) : [];
+  const answers = turn?.answer.trim() ? answerPages(redact(turn.answer).text) : [];
+  const all = [...steps, ...answers];
+  const index = Math.max(0, Math.min(page, all.length - 1));
+  const source = s.processSource(agentName(a), index + 1, Math.max(1, all.length), turn?.truncated ?? false);
+  const text = `**${a.pane_id} · ${screenText(placeOf(a))} · ${agentName(a)}**\n${source}\n\n${all[index] ?? s.processEmpty}`;
+  return {
+    text,
+    actions: [
+      ...(index > 0 ? [{ id: processAction(a.terminal_id, index - 1), label: s.previousLabel }] : []),
+      ...(index < all.length - 1 ? [{ id: processAction(a.terminal_id, index + 1), label: s.nextLabel }] : []),
+      { id: processAction(a.terminal_id, index), label: s.refreshLabel },
+      { id: viewAction(a.terminal_id), label: s.viewLabel(a.pane_id) },
+    ],
+  };
+}
+
 /** A notice when a live card shows the turn: a finished turn points at it; a dialog still shows the screen and its buttons. */
 function liveNotice(n: Extract<Notice, { agent: unknown }>, v: NoticeView): RenderedMessage {
   const { s, machine } = v;
   const a = n.agent;
   const footer = v.topic ? s.footerTopic(a.pane_id) : s.footerDm(a.pane_id);
   if (n.kind === "blocked") {
-    const text = `${s.blockedHead(machine, placeOf(a), agentName(a))}${fence(v.screen ?? "")}`;
-    const actions = v.threadId ? buttons(v.threadId, v.options, s) : undefined;
+    const text = `${s.blockedHead(machine, placeOf(a), agentName(a))}\n\n${screenText(v.screen ?? "")}`;
+    const actions = waitingButtons(a, v.options, s);
     return { text, sections: [{ kind: "footer", text: footer }], ...(actions ? { actions } : {}) };
   }
   const head = s.doneHead(machine, placeOf(a), agentName(a), s.duration(n.turnMs));
@@ -279,9 +308,10 @@ export function noticeMessage(n: Notice, v: NoticeView): RenderedMessage {
       ? s.blockedHead(machine, placeOf(a), agentName(a))
       : s.doneHead(machine, placeOf(a), agentName(a), s.duration(n.turnMs));
   const title = titleOf(a);
-  const text = `${head}${title ? `\n${title}` : ""}${fence(v.screen ?? "")}`;
+  const body = n.kind === "blocked" ? `\n\n${screenText(v.screen ?? "")}` : fence(v.screen ?? "");
+  const text = `${head}${title ? `\n${title}` : ""}${body}`;
   const footer = v.topic ? s.footerTopic(a.pane_id) : s.footerDm(a.pane_id);
-  const actions = n.kind === "blocked" && v.threadId ? buttons(v.threadId, v.options, s) : undefined;
+  const actions = n.kind === "blocked" ? waitingButtons(a, v.options, s) : undefined;
   return { text, sections: [{ kind: "footer", text: footer }], ...(actions ? { actions } : {}) };
 }
 

@@ -83,6 +83,11 @@ export interface Strings {
   panesFooter: string;
   viewLabel: (id: string) => string;
   refreshLabel: string;
+  processLabel: string;
+  processSource: (agent: string, page: number, total: number, truncated: boolean) => string;
+  processEmpty: string;
+  previousLabel: string;
+  nextLabel: string;
   viewHead: (machine: string, id: string, place: string, kind: string, state: string) => string;
   viewEmpty: string;
   viewFooter: (id: string) => string;
@@ -202,6 +207,12 @@ const zh: Strings = {
   panesFooter: "/view p2 看屏幕 · /send p2 文字 输入 · /keys p2 esc 按键",
   viewLabel: (id) => `看 ${id}`,
   refreshLabel: "刷新",
+  processLabel: "过程 / 回答",
+  processSource: (agent, page, total, truncated) =>
+    `${agent} JSONL · 最新一轮 · ${page}/${total} 页${truncated ? "（记录前段已截断）" : ""}\n仅显示日志中可见的 thinking、工具调用和回答。`,
+  processEmpty: "尚无可读取的 JSONL 过程记录；终端画面仍可查看。",
+  previousLabel: "上一页",
+  nextLabel: "下一页",
   viewHead: (machine, id, place, kind, state) =>
     `**${machine} · ${id} · ${place} · ${kind}${state ? ` · ${state}` : ""}**`,
   viewEmpty: "（屏幕是空的）",
@@ -211,6 +222,7 @@ const zh: Strings = {
     "用法：",
     "- /ls：所有 pane",
     "- /view <pane> [行数]：看它的屏幕",
+    "- /process <pane>：JSONL 中记录的过程和回答",
     "- /send <pane> <文字>：输入文字并回车",
     "- /keys <pane> <键>…：按键，如 esc、enter、ctrl+c、up、1",
     "<pane> 可以是 p2、w1:p2、tab 名或目录名。在 agent 的话题里用 /view、/keys esc。",
@@ -333,6 +345,12 @@ const en: Strings = {
   panesFooter: "/view p2 for its screen · /send p2 text to type · /keys p2 esc to press keys",
   viewLabel: (id) => `View ${id}`,
   refreshLabel: "Refresh",
+  processLabel: "Process / answer",
+  processSource: (agent, page, total, truncated) =>
+    `${agent} JSONL · latest turn · ${page}/${total}${truncated ? " (earlier records truncated)" : ""}\nOnly thinking, tool calls and answers visible in the log are shown.`,
+  processEmpty: "No readable JSONL turn yet; the terminal screen is still available.",
+  previousLabel: "Previous",
+  nextLabel: "Next",
   viewHead: (machine, id, place, kind, state) =>
     `**${machine} · ${id} · ${place} · ${kind}${state ? ` · ${state}` : ""}**`,
   viewEmpty: "(the screen is empty)",
@@ -342,6 +360,7 @@ const en: Strings = {
     "Usage:",
     "- /ls: every pane",
     "- /view <pane> [lines]: its screen",
+    "- /process <pane>: process and answer recorded in JSONL",
     "- /send <pane> <text>: type the text and Enter",
     "- /keys <pane> <key>…: press keys, e.g. esc, enter, ctrl+c, up, 1",
     "<pane> is p2, w1:p2, a tab's name or a directory. In an agent's topic: /view, /keys esc.",
