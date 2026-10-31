@@ -597,8 +597,8 @@ describe("notices and answers", () => {
     expect(card?.message.text).toBe(
       [
         "**my-mac · 2 agents**",
-        "- ledger · Codex · working · 5 min · fix the parser",
-        "- api · Claude · idle · 5 min · fix the parser",
+        "- w1:p1 · ledger · Codex · working · 5 min · fix the parser",
+        "- w1:p2 · api · Claude · idle · 5 min · fix the parser",
       ].join("\n"),
     );
     expect(card?.message.sections?.[0]?.text).toBe("sending · quiet hours 23:00-08:00 · notices go to the workbench");
@@ -698,14 +698,30 @@ describe("looking at and driving any pane", () => {
     expect(card?.message.text).toBe(
       [
         "**my-mac · 2 panes**",
-        "- p1 · ledger · Codex · idle · fix the parser",
-        "- p3 · tail · scratch · terminal · zsh",
+        "- w1:p1 · ledger · Codex · idle · fix the parser",
+        "- w1:p3 · tail · scratch · terminal · zsh",
       ].join("\n"),
     );
     expect(card?.message.actions).toEqual([
-      { id: "herdr:view:term_1", label: "View p1" },
-      { id: "herdr:view:term_3", label: "View p3" },
+      { id: "herdr:view:term_1", label: "View w1:p1" },
+      { id: "herdr:view:term_3", label: "View w1:p3" },
     ]);
+  });
+
+  it("status uses the same pane ids and window names as ls, even if a terminal shares the short id", async () => {
+    w.herdr.agents.push(agent("unknown", { pane_id: "w2:p1", agent: null }));
+    const tab = w.herdr.tabs[0];
+    if (tab) tab.label = "parser";
+    await send(w, { chat: DM, kind: "dm", text: "/ls" });
+    expect(w.aio.delivered.at(-1)?.message.text).toContain("- w1:p1 · parser · ledger · Codex");
+    await send(w, { chat: DM, kind: "dm", text: "/status" });
+    expect(w.aio.delivered.at(-1)?.message.text).toContain("- w1:p1 · parser · ledger · Codex");
+    // A failed window lookup still leaves an identifiable, useful status card.
+    w.herdr.errors.set("tab.list", "unavailable");
+    await send(w, { chat: DM, kind: "dm", text: "/status" });
+    expect(w.aio.delivered.at(-1)?.message.text).toContain("- w1:p1 · ledger · Codex");
+    expect(w.aio.delivered.at(-1)?.message.text).not.toContain("unavailable");
+    expect(w.herdr.actions).toHaveLength(0);
   });
 
   it("shows a pane's screen by any of its names, and a reply to the card talks to that pane", async () => {

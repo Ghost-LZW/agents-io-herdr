@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { strings } from "../src/i18n.ts";
 import { buttons, noticeMessage, statusMessage } from "../src/notice.ts";
+import { panesMessage } from "../src/panes.ts";
 import { hideSecrets, REDACTED, redact } from "../src/redact.ts";
 import { cutSidePanel, optionsOf, summaryOf, tailOf } from "../src/screen.ts";
 import { agent } from "./fixtures.ts";
@@ -246,7 +247,7 @@ describe("notice cards", () => {
   it("lists every agent in a status card, waiting ones first", () => {
     const m = statusMessage({
       machine: "my-mac",
-      agents: [
+      panes: [
         agent("working", {
           pane_id: "w1:p2",
           terminal_id: "term_2",
@@ -257,6 +258,7 @@ describe("notice cards", () => {
         agent("blocked"),
         { ...agent("idle", { pane_id: "w1:p3" }), agent: null },
       ],
+      tabs: [],
       error: null,
       views: [
         { key: "w1:p1|term_1", status: "blocked", since: 0, sinceStart: false, workingSince: null },
@@ -271,10 +273,73 @@ describe("notice cards", () => {
     expect(m.text).toBe(
       [
         "**my-mac · 2 agents**",
-        "- ledger · Codex · waiting for you · 12 min · fix the parser",
-        "- api · Claude · working · ≥12 min · fix the parser",
+        "- w1:p1 · ledger · Codex · waiting for you · 12 min · fix the parser",
+        "- w1:p2 · api · Claude · working · ≥12 min · fix the parser",
       ].join("\n"),
     );
     expect(m.sections?.[0]?.text).toBe("sending · quiet hours 23:00-08:00 · notices go to the workbench");
+  });
+
+  it.each(["en", "zh"] as const)(
+    "matches full ls pane ids and window names even without a short-id collision (%s)",
+    (locale) => {
+      const s = strings(locale);
+      const panes = [
+        agent("working", { pane_id: "w1:p2", tab_id: "w1:t1" }),
+        agent("idle", { pane_id: "w1:p3", tab_id: "w1:t2", agent: "claude" }),
+        agent("unknown", { pane_id: "w2:p2", agent: null }),
+      ];
+      const tabs = [
+        { tab_id: "w1:t1", workspace_id: "w1", number: 1, label: "parser" },
+        { tab_id: "w1:t2", workspace_id: "w1", number: 2, label: "review" },
+      ];
+      const status = statusMessage({
+        machine: "my-mac",
+        panes,
+        tabs,
+        error: null,
+        views: [],
+        now: 0,
+        s,
+        paused: false,
+        quiet: null,
+        workbench: true,
+      });
+      const ls = panesMessage({ machine: "my-mac", panes, tabs, s });
+      for (const prefix of ["- w1:p2 · parser · ledger ·", "- w1:p3 · review · ledger ·"]) {
+        expect(status.text.split("\n").some((line) => line.startsWith(prefix))).toBe(true);
+        expect(ls.text.split("\n").some((line) => line.startsWith(prefix))).toBe(true);
+      }
+      expect(status.text).not.toContain("w2:p2");
+    },
+  );
+
+  it("uses pane ids when status has no window name and hides secrets in names just like ls", () => {
+    const panes = [agent("working", { tab_id: "w1:t1" })];
+    for (const [label, expected] of [
+      [undefined, ""],
+      ["   ", ""],
+      ["token=abc123def456ghi", `token=${REDACTED}`],
+    ]) {
+      const tabs = label === undefined ? [] : [{ tab_id: "w1:t1", workspace_id: "w1", number: 1, label }];
+      const status = statusMessage({
+        machine: "my-mac",
+        panes,
+        tabs,
+        error: null,
+        views: [],
+        now: 0,
+        s,
+        paused: false,
+        quiet: null,
+        workbench: true,
+      });
+      const ls = panesMessage({ machine: "my-mac", panes, tabs, s });
+      const prefix = `- w1:p1${expected ? ` · ${expected}` : ""} · ledger ·`;
+      expect(status.text.split("\n")[1]?.startsWith(prefix)).toBe(true);
+      expect(ls.text.split("\n")[1]?.startsWith(prefix)).toBe(true);
+      expect(status.text).not.toContain("abc123def456ghi");
+      expect(ls.text).not.toContain("abc123def456ghi");
+    }
   });
 });

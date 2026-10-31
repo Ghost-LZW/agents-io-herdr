@@ -1681,16 +1681,18 @@ export class Bridge {
 
   /** The `status` card: every agent in herdr now. */
   async statusCard(): Promise<RenderedMessage> {
-    let agents: HerdrAgent[] | null = null;
+    let panes: HerdrAgent[] | null = null;
+    let tabs: HerdrTab[] = [];
     let error: string | null = null;
     try {
-      agents = await listAgents(this.#o.herdr);
+      [panes, tabs] = await Promise.all([listPanes(this.#o.herdr), listTabs(this.#o.herdr).catch(() => [])]);
     } catch (e) {
       error = (e as Error).message;
     }
     return statusMessage({
       machine: this.#o.machine,
-      agents,
+      panes,
+      tabs,
       error,
       views: this.#watcher.snapshot(),
       now: this.#now(),

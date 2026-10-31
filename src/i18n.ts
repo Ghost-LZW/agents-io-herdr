@@ -59,7 +59,15 @@ export interface Strings {
   workbenchSame: string;
   workbenchExists: string;
   statusHead: (machine: string, n: number) => string;
-  statusLine: (place: string, agent: string, state: string, since: string, title: string) => string;
+  statusLine: (
+    id: string,
+    tab: string,
+    place: string,
+    agent: string,
+    state: string,
+    since: string,
+    title: string,
+  ) => string;
   statusNone: string;
   statusHerdrDown: (reason: string) => string;
   statusFooter: (o: { paused: boolean; quiet: string | null; workbench: boolean }) => string;
@@ -157,8 +165,8 @@ const zh: Strings = {
   workbenchSame: "这个群已经是工作台。",
   workbenchExists: "已经有工作台群了，通知都发在那里。",
   statusHead: (machine, n) => `**${machine} · ${n} 个 agent**`,
-  statusLine: (place, agent, state, since, title) =>
-    `- ${place} · ${agent} · ${state} · ${since}${title ? ` · ${title}` : ""}`,
+  statusLine: (id, tab, place, agent, state, since, title) =>
+    `- ${id}${tab && tab !== place ? ` · ${tab}` : ""} · ${place} · ${agent} · ${state} · ${since}${title ? ` · ${title}` : ""}`,
   statusNone: "herdr 里现在没有 agent。",
   statusHerdrDown: (reason) => `读不了 herdr：${reason}`,
   statusFooter: (o) =>
@@ -288,8 +296,8 @@ const en: Strings = {
   workbenchSame: "This group already is the workbench.",
   workbenchExists: "There already is a workbench group; notices go there.",
   statusHead: (machine, n) => `**${machine} · ${n} agent${n === 1 ? "" : "s"}**`,
-  statusLine: (place, agent, state, since, title) =>
-    `- ${place} · ${agent} · ${state} · ${since}${title ? ` · ${title}` : ""}`,
+  statusLine: (id, tab, place, agent, state, since, title) =>
+    `- ${id}${tab && tab !== place ? ` · ${tab}` : ""} · ${place} · ${agent} · ${state} · ${since}${title ? ` · ${title}` : ""}`,
   statusNone: "No agents in herdr right now.",
   statusHerdrDown: (reason) => `Cannot read herdr: ${reason}`,
   statusFooter: (o) =>
