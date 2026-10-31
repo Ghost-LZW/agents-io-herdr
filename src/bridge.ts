@@ -35,6 +35,7 @@ import {
   sendKeys,
   sendPaneKeys,
   startAgent,
+  submitPrompt,
 } from "./herdr.ts";
 import { type Command, commandOf, type Strings, strings } from "./i18n.ts";
 import { progressOf } from "./live.ts";
@@ -867,7 +868,7 @@ export class Bridge {
     const keyed = a.agent_status === "blocked" && key !== undefined;
     try {
       if (keyed) await sendKeys(this.#o.herdr, target.paneId, [key]);
-      else await promptAgent(this.#o.herdr, target.paneId, text);
+      else await this.#submit(target, target.paneId, text);
     } catch (e) {
       const code = e instanceof HerdrError ? e.code : "error";
       if (code === "agent_blocked") return this.#spawnAskChoice(target, env.id);
@@ -1025,7 +1026,7 @@ export class Bridge {
           });
           await this.pushBindings();
         }
-        await promptAgent(this.#o.herdr, sp.paneId, prompt);
+        await this.#submit(sp, sp.paneId, prompt);
         sp.turnAt ??= now;
         sp.lastAt = now;
         this.store.save();
@@ -1035,7 +1036,7 @@ export class Bridge {
       // fresh: a new agent on the same place, told what it is for.
       const id = newId();
       const opened = await this.#openAgent(rule, item, id);
-      await promptAgent(this.#o.herdr, opened.paneId, `${rule.preamble.trim()}\n\n${prompt}`.trim());
+      await this.#submit({ id }, opened.paneId, `${rule.preamble.trim()}\n\n${prompt}`.trim());
       const { session: _resumed, ...place } = sp;
       this.store.state.spawned.push({
         ...place,
@@ -1193,11 +1194,7 @@ export class Bridge {
     let label: string;
     try {
       ({ paneId, terminalId, tabId, label } = await this.#openAgent(rule, item, id));
-      await promptAgent(
-        this.#o.herdr,
-        paneId,
-        firstPrompt(rule, item, now, this.#blobDir(), await this.#historyOf(item)),
-      );
+      await this.#submit({ id }, paneId, firstPrompt(rule, item, now, this.#blobDir(), await this.#historyOf(item)));
     } catch (e) {
       const why = e instanceof HerdrError ? `${e.code}: ${e.message}` : (e as Error).message;
       this.#log(`spawn ${rule.id} failed: ${why}`);
@@ -1308,6 +1305,13 @@ export class Bridge {
       `herdr:sp:${sp.id}:ask:${sha(screen).slice(0, 12)}`,
       replyTo,
     );
+  }
+
+  /** A prompt into a spawned agent, Enter pressed again when the harness missed it. */
+  async #submit(sp: Pick<Spawned, "id">, paneId: string, text: string): Promise<void> {
+    const sleep = this.#o.sleep;
+    if (await submitPrompt(this.#o.herdr, paneId, text, sleep ? { sleep } : {}))
+      this.#log(`spawn ${sp.id}: the prompt was not submitted; pressed enter`);
   }
 
   /** Every tick: each spawned agent's turn followed; its answer goes out when it stops; gone ones close. */

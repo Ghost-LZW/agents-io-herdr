@@ -375,6 +375,9 @@ export class FakeHerdr {
   startupDialog: string | null = null;
   /** Panes where an agent was started and herdr has not seen it ready yet. */
   #starting = new Set<string>();
+  /** Count state changes (`state_change_seq`): a prompt is one; with `missEnter`, the harness takes the text and misses its Enter. */
+  seq = false;
+  missEnter = 0;
   /** Panes whose history herdr cannot read now (a full-screen program in a dialog): only `visible` works. */
   visibleOnly = new Set<string>();
   #server: Server;
@@ -463,7 +466,24 @@ export class FakeHerdr {
         return { agent: { pane_id: pane, launch_pending: true, interactive_ready: false, agent_status: "unknown" } };
       }
       const a = this.agents.find((x) => x.pane_id === pane);
-      return { agent: { ...a, interactive_ready: a?.agent_status === "idle" } };
+      return {
+        agent: {
+          ...a,
+          ...(this.seq ? { state_change_seq: a?.state_change_seq ?? 0 } : {}),
+          interactive_ready: a?.agent_status === "idle",
+        },
+      };
+    }
+    if (
+      this.seq &&
+      (method === "agent.prompt" || (method === "agent.send_keys" && (params.keys as string[]).includes("enter")))
+    ) {
+      const pane = String(params.target);
+      const missed = method === "agent.prompt" && this.missEnter > 0 && this.missEnter--;
+      if (!missed)
+        this.agents = this.agents.map((a) =>
+          a.pane_id === pane ? { ...a, state_change_seq: (a.state_change_seq ?? 0) + 1 } : a,
+        );
     }
     if (method === "agent.list") return { agents: this.agents.filter((a) => a.agent) };
     if (method === "pane.list") return { panes: this.agents };
