@@ -222,7 +222,10 @@ export async function createTab(
  * Starts an agent in a pane at its shell prompt and waits until herdr sees it ready for input:
  * over the socket `agent.start` answers at once (`launch_pending`), and a prompt before the agent
  * is up is refused (`agent_not_ready`). A dialog at startup (a folder trust question) is
- * `agent_not_ready` too.
+ * `agent_not_ready` too. herdr types the command into the shell and does not see it fail: when the
+ * shell is still in front after `launchPolls` (its startup took the keys, say an update question
+ * reading one key) or is back in front (the agent exited), that is `agent_not_launched`, with what
+ * the screen shows; the pane cannot take another start then.
  */
 export async function startAgent(
   h: Herdr,
@@ -232,6 +235,8 @@ export async function startAgent(
     paneId: string;
     args: string[];
     timeoutMs?: number;
+    /** Polls (500 ms apart) the shell may stay in front before the agent counts as not started. */
+    launchPolls?: number;
     sleep?: (ms: number) => Promise<void>;
     /** A dialog at startup: the keys that answer it (from what the screen says), or null to give up. */
     onDialog?: (screen: string) => string[] | null;
@@ -256,7 +261,8 @@ export async function startAgent(
     }
   }
   let answered = 0;
-  for (;;) {
+  let ran = false;
+  for (let polls = 0; ; polls++) {
     const r = await h.call<{
       agent?: { interactive_ready?: boolean; launch_pending?: boolean; agent_status?: string };
     }>("agent.get", { target: o.paneId });
@@ -271,21 +277,48 @@ export async function startAgent(
       const screen = shown.read?.text ?? "";
       const keys = answered < 3 ? (o.onDialog?.(screen) ?? null) : null;
       if (!keys) {
-        const ask = screen
-          .split("\n")
-          .map((l) => l.trim())
-          .filter(Boolean)
-          .slice(-4)
-          .join(" / ");
-        throw new HerdrError("agent_not_ready", `${o.kind} is waiting on a dialog at startup: ${ask.slice(0, 300)}`);
+        throw new HerdrError(
+          "agent_not_ready",
+          `${o.kind} is waiting on a dialog at startup: ${lastLines(screen).slice(0, 300)}`,
+        );
       }
       answered++;
       await h.call("agent.send_keys", { target: o.paneId, keys });
-    }
+    } else if (await shellInFront(h, o.paneId)) {
+      if (ran || polls >= (o.launchPolls ?? 30)) {
+        const screen = await readPane(h, o.paneId, 40).catch(() => "");
+        throw new HerdrError(
+          "agent_not_launched",
+          `${o.kind} ${ran ? "exited" : "did not start"}: ${lastLines(screen).slice(0, 300)}`,
+        );
+      }
+    } else ran = true;
     if (Date.now() > until)
       throw new HerdrError("agent_not_ready", `${o.kind} was not ready within ${Math.round(timeoutMs / 1000)} s`);
     await sleep(500);
   }
+}
+
+/** The last few lines with something on them, on one line. */
+function lastLines(screen: string): string {
+  return screen
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(-4)
+    .join(" / ");
+}
+
+/** True when the pane's shell is what runs in front (null when herdr cannot tell). */
+async function shellInFront(h: Herdr, paneId: string): Promise<boolean | null> {
+  const r = await h
+    .call<{ process_info?: { shell_pid?: number; foreground_process_group_id?: number } }>("pane.process_info", {
+      pane_id: paneId,
+    })
+    .catch(() => null);
+  const p = r?.process_info;
+  if (p?.shell_pid === undefined || p.foreground_process_group_id === undefined) return null;
+  return p.shell_pid === p.foreground_process_group_id;
 }
 
 /** Closes a tab (what runs in it ends). */

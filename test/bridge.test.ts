@@ -1477,6 +1477,28 @@ describe("agents started from a message (spawn)", () => {
     expect(w.store.state.spawned).toHaveLength(1);
   });
 
+  it("starts again in a new tab when the shell lost the command, closing the tab it left", async () => {
+    w.herdr.lostStarts = 1;
+    await sendItem(w, side({ id: "m1", text: "go", trigger: true }));
+    const tabs = w.herdr.calls.filter(([m]) => m === "tab.create");
+    expect(tabs).toHaveLength(2);
+    expect(w.herdr.actions.filter(([m]) => m === "tab.close")).toEqual([["tab.close", { tab_id: "t1" }]]);
+    const names = w.herdr.calls.filter(([m]) => m === "agent.start").map(([, p]) => p.name);
+    expect(new Set(names).size).toBe(2);
+    expect(w.logs).toContainEqual(expect.stringMatching(/claude did not start: .*command not found; trying again/));
+    expect(w.store.state.spawned[0]).toMatchObject({ tabId: "t2" });
+  });
+
+  it("gives up when the second start is lost too, saying what the shell shows", async () => {
+    w.herdr.lostStarts = 2;
+    await sendItem(w, side({ id: "m1", text: "go", trigger: true }));
+    expect(w.aio.delivered.at(-1)?.message.text).toMatch(
+      /^Could not start an agent: agent_not_launched: claude did not start: .*zsh: command not found/,
+    );
+    expect(w.herdr.actions.filter(([m]) => m === "tab.close")).toHaveLength(2);
+    expect(w.store.state.spawned).toHaveLength(0);
+  });
+
   it("gives up on a startup dialog it does not know, saying what it asks", async () => {
     w.herdr.startupDialog = "Choose your theme\n❯ 1. Dark\n  2. Light";
     await sendItem(w, side({ id: "m1", text: "go", trigger: true }));

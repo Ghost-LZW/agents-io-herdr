@@ -351,6 +351,7 @@ const READS = new Set([
   "agent.get",
   "agent.read",
   "pane.list",
+  "pane.process_info",
   "pane.read",
   "tab.list",
   "workspace.list",
@@ -371,6 +372,10 @@ export class FakeHerdr {
   #made = 0;
   /** agent.start answers agent_pane_busy this many times first (a new tab's shell not ready yet). */
   busyStarts = 0;
+  /** agent.start types the command into this many new shells that lose it: the shell stays in front. */
+  lostStarts = 0;
+  /** Panes where the started agent never ran. */
+  #lost = new Set<string>();
   /** A question every agent asks at startup (until a key answers it with enter). */
   startupDialog: string | null = null;
   /** Panes where an agent was started and herdr has not seen it ready yet. */
@@ -448,11 +453,20 @@ export class FakeHerdr {
       this.agents = this.agents.map((a) =>
         a.pane_id === pane ? { ...a, agent: String(params.kind), agent_status: "unknown" } : a,
       );
-      this.#starting.add(pane);
+      if (this.lostStarts > 0 && this.lostStarts--) {
+        this.#lost.add(pane);
+        this.screens.set(pane, `➜  x git:(main) ${String(params.kind).slice(2)}\nzsh: command not found`);
+      } else this.#starting.add(pane);
       return { agent: { pane_id: pane, launch_pending: true } };
+    }
+    if (method === "pane.process_info") {
+      const pane = String(params.pane_id);
+      const ran = this.agents.find((a) => a.pane_id === pane)?.agent && !this.#lost.has(pane);
+      return { process_info: { pane_id: pane, shell_pid: 100, foreground_process_group_id: ran ? 200 : 100 } };
     }
     if (method === "agent.get") {
       const pane = String(params.target);
+      if (this.#lost.has(pane)) return { agent: { pane_id: pane, launch_pending: true, agent_status: "unknown" } };
       if (this.startupDialog && this.#starting.has(pane)) {
         this.agents = this.agents.map((a) => (a.pane_id === pane ? { ...a, agent_status: "blocked" } : a));
         this.screens.set(pane, this.startupDialog);

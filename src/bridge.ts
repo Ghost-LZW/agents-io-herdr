@@ -1141,24 +1141,40 @@ export class Bridge {
       if (hook.required) throw new Error(`${why}: ${oneLine(r.output).slice(-200)}`);
     }
     const h = this.#o.herdr;
-    let label = `${rule.id}-${id.slice(0, 4)}`;
+    const label = `${rule.id}-${id.slice(0, 4)}`;
     const ws = (await listWorkspaces(h)).find((w) => w.label === rule.workspace);
     const workspaceId =
       ws?.workspace_id ?? (await createWorkspace(h, { label: rule.workspace, cwd: dir })).workspace.workspace_id;
-    // The workspace's own first tab has no environment of its own: a tab in it does.
-    const opened = await createTab(h, { workspaceId, label, cwd: dir, env });
-    const paneId = opened.root_pane.pane_id;
-    label = opened.tab.label || label;
-    await startAgent(h, {
-      name: `${rule.id}-${id}${resume ? `-r${newId().slice(0, 4)}` : ""}`,
-      kind: rule.kind,
-      paneId,
-      args: [...rule.args, ...(resume ? ["--resume", resume] : [])],
-      onDialog: startupAnswer,
-      ...(this.#o.sleep ? { sleep: this.#o.sleep } : {}),
-    });
-    const a = (await listAgents(h)).find((x) => x.pane_id === paneId);
-    return { paneId, terminalId: a?.terminal_id ?? opened.root_pane.terminal_id, tabId: opened.tab.tab_id, label };
+    // A start that did not launch (the new shell's startup took the typed command) is tried once
+    // more in another tab: herdr holds the first pane for the agent it typed. A tab whose agent
+    // did not start is closed.
+    for (let attempt = 1; ; attempt++) {
+      // The workspace's own first tab has no environment of its own: a tab in it does.
+      const opened = await createTab(h, { workspaceId, label, cwd: dir, env });
+      const paneId = opened.root_pane.pane_id;
+      try {
+        await startAgent(h, {
+          name: `${rule.id}-${id}${resume || attempt > 1 ? `-r${newId().slice(0, 4)}` : ""}`,
+          kind: rule.kind,
+          paneId,
+          args: [...rule.args, ...(resume ? ["--resume", resume] : [])],
+          onDialog: startupAnswer,
+          ...(this.#o.sleep ? { sleep: this.#o.sleep } : {}),
+        });
+      } catch (e) {
+        await closeTab(h, opened.tab.tab_id).catch(() => undefined);
+        if (!(e instanceof HerdrError) || e.code !== "agent_not_launched" || attempt > 1) throw e;
+        this.#log(`spawn ${rule.id}: ${e.message}; trying again in a new tab`);
+        continue;
+      }
+      const a = (await listAgents(h)).find((x) => x.pane_id === paneId);
+      return {
+        paneId,
+        terminalId: a?.terminal_id ?? opened.root_pane.terminal_id,
+        tabId: opened.tab.tab_id,
+        label: opened.tab.label || label,
+      };
+    }
   }
 
   #envOf(rule: SpawnRule): Record<string, string> {
