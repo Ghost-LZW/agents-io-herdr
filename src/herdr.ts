@@ -225,7 +225,8 @@ export async function createTab(
  * `agent_not_ready` too. herdr types the command into the shell and does not see it fail: when the
  * shell is still in front after `launchPolls` (its startup took the keys, say an update question
  * reading one key) or is back in front (the agent exited), that is `agent_not_launched`, with what
- * the screen shows; the pane cannot take another start then.
+ * the screen shows; the pane cannot take another start then. Started means herdr saw the agent:
+ * a new shell's own startup commands are in front for a while too.
  */
 export async function startAgent(
   h: Herdr,
@@ -264,10 +265,12 @@ export async function startAgent(
   let ran = false;
   for (let polls = 0; ; polls++) {
     const r = await h.call<{
-      agent?: { interactive_ready?: boolean; launch_pending?: boolean; agent_status?: string };
+      agent?: { agent?: string | null; interactive_ready?: boolean; launch_pending?: boolean; agent_status?: string };
     }>("agent.get", { target: o.paneId });
     const a = r.agent;
     if (a?.interactive_ready) return;
+    // Only herdr seeing the agent counts: while the shell starts, its own startup commands are in front.
+    if (a?.agent) ran = true;
     if (a?.agent_status === "blocked") {
       const shown = await h.call<{ read: { text: string } }>("agent.read", {
         target: o.paneId,
@@ -292,7 +295,7 @@ export async function startAgent(
           `${o.kind} ${ran ? "exited" : "did not start"}: ${lastLines(screen).slice(0, 300)}`,
         );
       }
-    } else ran = true;
+    }
     if (Date.now() > until)
       throw new HerdrError("agent_not_ready", `${o.kind} was not ready within ${Math.round(timeoutMs / 1000)} s`);
     await sleep(500);

@@ -1470,6 +1470,14 @@ describe("agents started from a message (spawn)", () => {
     expect(w.herdr.actions).toHaveLength(n);
   });
 
+  it("/close under a quote of the trigger (its whole text in the quote) still closes the agent", async () => {
+    await sendItem(w, side({ id: "m1", text: "go", topic: "m0", trigger: true }));
+    const sp = w.store.state.spawned[0];
+    await sendItem(w, side({ id: "m2", text: "/close", topic: "m0", quote: "Me: /ai go\nhttps://example.com/a  b" }));
+    expect(w.herdr.actions.at(-1)).toEqual(["tab.close", { tab_id: sp?.tabId }]);
+    expect(w.store.state.spawned[0]?.closedAt).not.toBeNull();
+  });
+
   it("waits for a new tab's shell when herdr says it is not available yet", async () => {
     w.herdr.busyStarts = 3;
     await sendItem(w, side({ id: "m1", text: "go", trigger: true }));
@@ -1487,6 +1495,14 @@ describe("agents started from a message (spawn)", () => {
     expect(new Set(names).size).toBe(2);
     expect(w.logs).toContainEqual(expect.stringMatching(/claude did not start: .*command not found; trying again/));
     expect(w.store.state.spawned[0]).toMatchObject({ tabId: "t2" });
+  });
+
+  it("waits while a new shell runs its own startup commands, then the shell, before the agent shows", async () => {
+    w.herdr.shellStartup = 2;
+    w.herdr.pendingGets = 6;
+    await sendItem(w, side({ id: "m1", text: "go", trigger: true }));
+    expect(w.herdr.calls.filter(([m]) => m === "tab.create")).toHaveLength(1);
+    expect(w.store.state.spawned).toHaveLength(1);
   });
 
   it("gives up when the second start is lost too, saying what the shell shows", async () => {
