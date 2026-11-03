@@ -374,6 +374,11 @@ export class FakeHerdr {
   busyStarts = 0;
   /** agent.start types the command into this many new shells that lose it: the shell stays in front. */
   lostStarts = 0;
+  /** A new shell's own startup commands run in front for this many process checks, then the shell is in front until the agent shows. */
+  shellStartup = 0;
+  /** agent.get answers launch_pending this many times before the agent is ready. */
+  pendingGets = 1;
+  #pending = new Map<string, number>();
   /** Panes where the started agent never ran. */
   #lost = new Set<string>();
   /** A question every agent asks at startup (until a key answers it with enter). */
@@ -456,12 +461,18 @@ export class FakeHerdr {
       if (this.lostStarts > 0 && this.lostStarts--) {
         this.#lost.add(pane);
         this.screens.set(pane, `➜  x git:(main) ${String(params.kind).slice(2)}\nzsh: command not found`);
-      } else this.#starting.add(pane);
+      } else {
+        this.#starting.add(pane);
+        this.#pending.set(pane, this.pendingGets);
+      }
       return { agent: { pane_id: pane, launch_pending: true } };
     }
     if (method === "pane.process_info") {
       const pane = String(params.pane_id);
-      const ran = this.agents.find((a) => a.pane_id === pane)?.agent && !this.#lost.has(pane);
+      const job = this.shellStartup > 0 && this.shellStartup--;
+      const ran =
+        job ||
+        (!this.#starting.has(pane) && !this.#lost.has(pane) && this.agents.some((a) => a.pane_id === pane && a.agent));
       return { process_info: { pane_id: pane, shell_pid: 100, foreground_process_group_id: ran ? 200 : 100 } };
     }
     if (method === "agent.get") {
@@ -474,6 +485,11 @@ export class FakeHerdr {
       }
       if (this.#starting.has(pane) && this.agents.find((a) => a.pane_id === pane)?.agent_status === "blocked") {
         this.agents = this.agents.map((a) => (a.pane_id === pane ? { ...a, agent_status: "unknown" } : a));
+      }
+      const left = this.#pending.get(pane) ?? 1;
+      if (this.#starting.has(pane) && left > 1) {
+        this.#pending.set(pane, left - 1);
+        return { agent: { pane_id: pane, launch_pending: true, interactive_ready: false, agent_status: "unknown" } };
       }
       if (this.#starting.delete(pane)) {
         this.agents = this.agents.map((a) => (a.pane_id === pane ? { ...a, agent_status: "idle" } : a));
