@@ -12,29 +12,32 @@
  */
 import type { HerdrAgent, HerdrTab } from "./herdr.ts";
 import type { Strings } from "./i18n.ts";
-import { ACTION_PREFIX, agentName, BUTTON_LABEL_MAX, clip, fence, placeOf, tabLabels, titleOf } from "./notice.ts";
+import { agentName, placeOf, tabLabels, titleOf } from "./notice.ts";
 import type { RenderedMessage } from "./protocol.ts";
-import type { DialogOption } from "./screen.ts";
+import { processAction, screenText, viewAction } from "./terminal-controls.ts";
+
+export { PANE_KEY_ACTION, paneButtons, VIEW_ACTION, viewAction } from "./terminal-controls.ts";
 
 export type PaneCommand =
   | { cmd: "panes" }
   | { cmd: "view"; ref: string | null; lines: number | null }
+  | { cmd: "process"; ref: string | null }
   | { cmd: "send"; ref: string | null; text: string }
   | { cmd: "keys"; ref: string | null; keys: string[] }
   | { cmd: "usage" };
 
-const WORDS: Record<string, "panes" | "view" | "send" | "keys"> = {
+const WORDS: Record<string, "panes" | "view" | "process" | "send" | "keys"> = {
   ls: "panes",
   view: "view",
+  process: "process",
   send: "send",
   keys: "keys",
 };
 
-export const VIEW_LINES = 40;
+export const VIEW_LINES = 80;
 export const VIEW_LINES_MAX = 200;
 export const KEYS_MAX = 16;
 /** A card's text stays well under Feishu's limit. */
-const SCREEN_CHARS_MAX = 12_000;
 const VIEW_BUTTONS_MAX = 10;
 
 /**
@@ -51,6 +54,7 @@ export function paneCommandOf(text: string, inThread: boolean): PaneCommand | nu
   const words = rest ? rest.split(/\s+/) : [];
   const lines = (s: string | undefined) => (s && /^\d{1,4}$/.test(s) ? Math.min(Number(s), VIEW_LINES_MAX) : null);
   if (inThread) {
+    if (cmd === "process") return words.length ? { cmd: "usage" } : { cmd, ref: null };
     if (cmd === "view" && words.length <= 1 && (!words[0] || lines(words[0])))
       return { cmd, ref: null, lines: lines(words[0]) };
     if (cmd === "keys" && words.length >= 1 && words.length <= KEYS_MAX)
@@ -63,6 +67,8 @@ export function paneCommandOf(text: string, inThread: boolean): PaneCommand | nu
     case "view":
       if (words.length < 1 || words.length > 2 || (words[1] && !lines(words[1]))) return { cmd: "usage" };
       return { cmd, ref: words[0] as string, lines: lines(words[1]) };
+    case "process":
+      return words.length === 1 ? { cmd, ref: words[0] as string } : { cmd: "usage" };
     case "send": {
       const s = /^(\S+)\s+([\s\S]+)$/.exec(rest);
       return s ? { cmd, ref: s[1] as string, text: (s[2] as string).trim() } : { cmd: "usage" };
@@ -93,23 +99,6 @@ export function resolvePane(ref: string, panes: HerdrAgent[], tabs: HerdrTab[]):
     if (hits.length > 1) return { ok: false, candidates: hits };
   }
   return { ok: false, candidates: [] };
-}
-
-/**
- * Buttons about one pane name its terminal (herdr's `terminal_id`), not the pane: a card from
- * before presses nothing once another program runs there. `herdr:view:<terminal>` shows the
- * screen; `herdr:pk:<terminal>:<key>` presses a dialog's key.
- */
-export const VIEW_ACTION = /^herdr:view:([\w-]{1,64})$/;
-export const viewAction = (terminalId: string) => `${ACTION_PREFIX}view:${terminalId}`;
-export const PANE_KEY_ACTION = /^herdr:pk:([\w-]{1,64}):([1-9]|esc)$/;
-
-/** A dialog's choices as buttons outside a pane's topic (`1 Yes`), and Esc. */
-export function paneButtons(terminalId: string, options: DialogOption[], s: Strings): RenderedMessage["actions"] {
-  return [...options, { key: "esc", label: s.escLabel }].map((o) => ({
-    id: `${ACTION_PREFIX}pk:${terminalId}:${o.key}`,
-    label: clip(o.key === "esc" ? o.label : `${o.key} ${o.label}`.trim(), BUTTON_LABEL_MAX),
-  }));
 }
 
 const kindOf = (p: HerdrAgent, s: Strings) => (p.agent ? agentName(p) : s.terminalKind);
@@ -164,13 +153,16 @@ export function viewMessage(o: {
   actions?: RenderedMessage["actions"];
 }): RenderedMessage {
   const { s, pane: p } = o;
-  let screen = o.screen;
-  if (screen.length > SCREEN_CHARS_MAX) screen = `…\n${screen.slice(screen.length - SCREEN_CHARS_MAX)}`;
+  const screen = screenText(o.screen);
   const head = s.viewHead(o.machine, o.id, placeOf(p), kindOf(p, s), p.agent ? s.state(p.agent_status) : "");
   const title = titleOf(p);
   return {
-    text: `${head}${title ? `\n${title}` : ""}${fence(screen) || `\n${s.viewEmpty}`}`,
+    text: `${head}${title ? `\n${title}` : ""}${screen ? `\n\n${screen}` : `\n${s.viewEmpty}`}`,
     sections: [{ kind: "footer", text: o.footer }],
-    actions: [...(o.actions ?? []), { id: viewAction(p.terminal_id), label: s.refreshLabel }],
+    actions: [
+      ...(o.actions ?? []),
+      { id: viewAction(p.terminal_id), label: s.refreshLabel },
+      ...(p.agent ? [{ id: processAction(p.terminal_id), label: s.processLabel }] : []),
+    ],
   };
 }
