@@ -1,6 +1,6 @@
 /** How a notice, a status listing and the dialog buttons look on Feishu (RenderedMessage cards). */
 import { basename } from "node:path";
-import type { HerdrAgent } from "./herdr.ts";
+import type { HerdrAgent, HerdrTab } from "./herdr.ts";
 import type { Strings } from "./i18n.ts";
 import type { RenderedMessage } from "./protocol.ts";
 import { redact } from "./redact.ts";
@@ -24,6 +24,16 @@ export const placeOf = (a: Pick<HerdrAgent, "foreground_cwd" | "cwd" | "pane_id"
   basename(a.foreground_cwd || a.cwd || "") || a.pane_id;
 export const titleOf = (a: Pick<HerdrAgent, "terminal_title_stripped">) =>
   redact((a.terminal_title_stripped ?? "").trim()).text.slice(0, 80);
+
+/** `p2` for `w1:p2`, unless any pane (including a plain terminal) shares that short id. */
+export function shortId(id: string, all: Pick<HerdrAgent, "pane_id">[]): string {
+  const short = id.slice(id.lastIndexOf(":") + 1);
+  const clash = all.some((p) => p.pane_id !== id && p.pane_id.slice(p.pane_id.lastIndexOf(":") + 1) === short);
+  return clash ? id : short;
+}
+
+/** Window names can contain secrets too; status and ls show the same cleaned names. */
+export const tabLabels = (tabs: HerdrTab[]) => new Map(tabs.map((t) => [t.tab_id, redact(t.label.trim()).text]));
 
 /** Button ids: `herdr:key:<thread id>:<key>`. */
 export const ACTION_PREFIX = "herdr:";
@@ -278,7 +288,9 @@ export function noticeMessage(n: Notice, v: NoticeView): RenderedMessage {
 /** `status`: every agent in herdr, deterministic, one card. */
 export function statusMessage(o: {
   machine: string;
-  agents: HerdrAgent[] | null;
+  /** All panes; status lists only agents and keeps their full workspace-qualified ids. */
+  panes: HerdrAgent[] | null;
+  tabs: HerdrTab[];
   error: string | null;
   views: PaneView[];
   now: number;
@@ -289,11 +301,12 @@ export function statusMessage(o: {
 }): RenderedMessage {
   const { s } = o;
   const footer = { kind: "footer" as const, text: s.statusFooter(o) };
-  if (!o.agents)
+  if (!o.panes)
     return { text: `${s.statusHead(o.machine, 0)}\n${s.statusHerdrDown(o.error ?? "?")}`, sections: [footer] };
-  const rows = o.agents.filter((a) => a.agent);
+  const rows = o.panes.filter((a) => a.agent);
   if (!rows.length) return { text: `${s.statusHead(o.machine, 0)}\n${s.statusNone}`, sections: [footer] };
   const views = new Map(o.views.map((v) => [v.key, v]));
+  const labels = tabLabels(o.tabs);
   const order: Record<string, number> = { blocked: 0, working: 1, done: 2, idle: 3 };
   rows.sort(
     (x, y) => (order[x.agent_status] ?? 4) - (order[y.agent_status] ?? 4) || placeOf(x).localeCompare(placeOf(y)),
@@ -301,7 +314,15 @@ export function statusMessage(o: {
   const lines = rows.map((a) => {
     const v = views.get(paneKey(a));
     const since = v ? `${v.sinceStart ? "≥" : ""}${s.duration(o.now - v.since)}` : "?";
-    return s.statusLine(placeOf(a), agentName(a), s.state(a.agent_status), since, titleOf(a));
+    return s.statusLine(
+      a.pane_id,
+      labels.get(a.tab_id ?? "") ?? "",
+      placeOf(a),
+      agentName(a),
+      s.state(a.agent_status),
+      since,
+      titleOf(a),
+    );
   });
   return { text: `${s.statusHead(o.machine, rows.length)}\n${lines.join("\n")}`, sections: [footer] };
 }

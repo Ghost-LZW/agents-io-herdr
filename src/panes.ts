@@ -12,7 +12,7 @@
  */
 import type { HerdrAgent, HerdrTab } from "./herdr.ts";
 import type { Strings } from "./i18n.ts";
-import { ACTION_PREFIX, agentName, BUTTON_LABEL_MAX, clip, fence, placeOf, titleOf } from "./notice.ts";
+import { ACTION_PREFIX, agentName, BUTTON_LABEL_MAX, clip, fence, placeOf, tabLabels, titleOf } from "./notice.ts";
 import type { RenderedMessage } from "./protocol.ts";
 import type { DialogOption } from "./screen.ts";
 
@@ -73,12 +73,7 @@ export function paneCommandOf(text: string, inThread: boolean): PaneCommand | nu
   }
 }
 
-/** `p2` for `w1:p2`, unless another pane has the same short id. */
-export function shortId(id: string, all: Pick<HerdrAgent, "pane_id">[]): string {
-  const short = id.slice(id.lastIndexOf(":") + 1);
-  const clash = all.some((p) => p.pane_id !== id && p.pane_id.slice(p.pane_id.lastIndexOf(":") + 1) === short);
-  return clash ? id : short;
-}
+export { shortId } from "./notice.ts";
 
 export type Resolved = { ok: true; pane: HerdrAgent } | { ok: false; candidates: HerdrAgent[] };
 
@@ -137,10 +132,10 @@ export function panesMessage(o: {
   const rows = sortPanes(o.panes, o.tabs);
   const footer = { kind: "footer" as const, text: s.panesFooter };
   if (!rows.length) return { text: `${s.panesHead(o.machine, 0)}\n${s.panesNone}`, sections: [footer] };
-  const label = new Map(o.tabs.map((t) => [t.tab_id, t.label]));
+  const label = tabLabels(o.tabs);
   const lines = rows.map((p) =>
     s.paneLine(
-      shortId(p.pane_id, rows),
+      p.pane_id,
       label.get(p.tab_id ?? "") ?? "",
       placeOf(p),
       kindOf(p, s),
@@ -150,7 +145,7 @@ export function panesMessage(o: {
   );
   const actions = rows.slice(0, VIEW_BUTTONS_MAX).map((p) => ({
     id: viewAction(p.terminal_id),
-    label: s.viewLabel(shortId(p.pane_id, rows)),
+    label: s.viewLabel(p.pane_id),
   }));
   return { text: `${s.panesHead(o.machine, rows.length)}\n${lines.join("\n")}`, sections: [footer], actions };
 }
