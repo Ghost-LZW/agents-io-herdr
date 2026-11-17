@@ -23,7 +23,8 @@ export interface Strings {
   spawnNone: string;
   spawnClosedNamed: (closed: string[], left: string[]) => string;
   spawnNoSuch: (name: string, names: string[]) => string;
-  spawnChoice: (screen: string) => string;
+  spawnChoice: (screen: string, viaTrigger: boolean) => string;
+  spawnBadModel: (model: string, models: string[]) => string;
   overnightHead: (machine: string) => string;
   overnightItem: (place: string, agent: string, title: string, dur: string, at: string) => string;
   footerTopic: (pane: string) => string;
@@ -109,13 +110,16 @@ const zh: Strings = {
   spawnGone: "这个 agent 已经结束；要继续请重新叫一个。",
   spawnClosed: "已关掉这个 agent。",
   spawnShared: (names, newest) =>
-    `这个话题现在有 ${names.length} 个 agent：${names.join("、")}。你说的话发给最新的 ${newest}；\`/agents\` 查看，\`/close <名字>\` 关指定的，\`/close all\` 全关。`,
+    `这个话题现在有 ${names.length} 个 agent：${names.join("、")}。对 agent 说的话发给最新的 ${newest}；\`/agents\` 查看，\`/close <名字>\` 关指定的，\`/close all\` 全关。`,
   spawnList: (names, newest) =>
-    `这个话题的 agent：${names.map((n) => (n === newest ? `${n}（最新，你说的话发给它）` : n)).join("、")}`,
+    `这个话题的 agent：${names.map((n) => (n === newest ? `${n}（最新，对 agent 说的话发给它）` : n)).join("、")}`,
   spawnNone: "这个话题没有在跑的 agent。",
   spawnClosedNamed: (closed, left) => `已关掉 ${closed.join("、")}。${left.length ? `还在：${left.join("、")}。` : ""}`,
   spawnNoSuch: (name, names) => `没有叫 ${name} 的 agent。这个话题的 agent：${names.join("、") || "（无）"}`,
-  spawnChoice: (screen) => `它在等你选择，回复数字（或 esc）：\n${screen}`,
+  spawnChoice: (screen, viaTrigger) =>
+    `它在等你选择，${viaTrigger ? "用触发词带上数字（或 esc）回复" : "回复数字（或 esc）"}：\n${screen}`,
+  spawnBadModel: (model, models) =>
+    `不能用模型 ${model}。${models.length ? `可选：${models.join("、")}` : "模型名只能是字母、数字和 . _ / : -"}`,
   overnightHead: (machine) => `**${machine} · 夜里做完的**`,
   overnightItem: (place, agent, title, dur, at) =>
     `- ${place} · ${agent}${title ? ` · ${title}` : ""}（${dur}，${at} 做完）`,
@@ -237,14 +241,17 @@ const en: Strings = {
   spawnGone: "This agent has ended; start another with the trigger.",
   spawnClosed: "Closed this agent.",
   spawnShared: (names, newest) =>
-    `This topic now has ${names.length} agents: ${names.join(", ")}. What you say goes to the newest, ${newest}; \`/agents\` lists them, \`/close <name>\` closes one, \`/close all\` closes all.`,
+    `This topic now has ${names.length} agents: ${names.join(", ")}. What you say to an agent goes to the newest, ${newest}; \`/agents\` lists them, \`/close <name>\` closes one, \`/close all\` closes all.`,
   spawnList: (names, newest) =>
-    `Agents in this topic: ${names.map((n) => (n === newest ? `${n} (newest: what you say goes to it)` : n)).join(", ")}`,
+    `Agents in this topic: ${names.map((n) => (n === newest ? `${n} (newest: what you say to an agent goes to it)` : n)).join(", ")}`,
   spawnNone: "No agent is running in this topic.",
   spawnClosedNamed: (closed, left) =>
     `Closed ${closed.join(", ")}.${left.length ? ` Still running: ${left.join(", ")}.` : ""}`,
   spawnNoSuch: (name, names) => `No agent named ${name}. Agents in this topic: ${names.join(", ") || "(none)"}`,
-  spawnChoice: (screen) => `It is waiting for a choice; reply with a number (or esc):\n${screen}`,
+  spawnChoice: (screen, viaTrigger) =>
+    `It is waiting for a choice; reply with ${viaTrigger ? "the trigger and " : ""}a number (or esc):\n${screen}`,
+  spawnBadModel: (model, models) =>
+    `Cannot use the model ${model}. ${models.length ? `Choose from: ${models.join(", ")}` : "A model name is letters, digits and . _ / : -"}`,
   overnightHead: (machine) => `**${machine} · finished overnight**`,
   overnightItem: (place, agent, title, dur, at) =>
     `- ${place} · ${agent}${title ? ` · ${title}` : ""} (${dur}, done at ${at})`,

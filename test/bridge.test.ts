@@ -1144,22 +1144,84 @@ describe("agents started from a message (spawn)", () => {
     expect(w.aio.updateMessage(fin).text).toMatch(/^It is about the delayed release\.\n\n✓ Done \(/);
     expect(w.store.state.spawned[0]?.turnAt).toBeNull();
 
-    // The owner says more in the same topic (no trigger): typed into the same agent. Others' words are not.
+    // The owner says more in the same topic with the trigger: typed into the same agent. Without it
+    // (the owner talking to other people there), and others' words, are not.
     const before = w.herdr.actions.length;
-    await sendItem(w, side({ id: "m2", text: "and who owns it?", topic: "m0" }));
+    await sendItem(w, side({ id: "m2", text: "and who owns it?", topic: "m0", trigger: true }));
     expect(w.herdr.actions.slice(before)).toEqual([["agent.prompt", { target: pane, text: "and who owns it?" }]]);
+    await sendItem(w, side({ id: "m2b", text: "@someone can you check?", topic: "m0" }));
+    expect(w.herdr.actions).toHaveLength(before + 1);
     await sendItem(w, side({ id: "m3", text: "hi all", topic: "m0", from: "u_else" }));
     expect(w.herdr.actions).toHaveLength(before + 1);
 
-    // The trigger again in the same topic: another agent, in the same workspace, a tab of its own.
-    await sendItem(w, side({ id: "m4", text: "start over", topic: "m0", trigger: true }));
+    // The trigger with --new in the same topic: another agent, in the same workspace, a tab of its own.
+    await sendItem(w, side({ id: "m4", text: "--new start over", topic: "m0", trigger: true }));
     expect(w.store.state.spawned).toHaveLength(2);
     expect(w.herdr.actions.slice(before + 1).map(([m]) => m)).toEqual(["tab.create", "agent.start", "agent.prompt"]);
     // Later words go to the newest agent of the topic.
-    await sendItem(w, side({ id: "m5", text: "thanks", topic: "m0" }));
+    await sendItem(w, side({ id: "m5", text: "thanks", topic: "m0", trigger: true }));
     expect(w.herdr.actions.at(-1)).toEqual([
       "agent.prompt",
       { target: w.store.state.spawned[1]?.paneId, text: "thanks" },
+    ]);
+  });
+
+  it("starts the agent and model the owner picks in front of the words; a resumed wake keeps them", async () => {
+    w.cfg.spawn[0] = {
+      ...(w.cfg.spawn[0] as SpawnRule),
+      agents: {
+        ...(w.cfg.spawn[0] as SpawnRule).agents,
+        codex: { kind: "codex", args: ["--full-auto"], model: null, models: null },
+        claude: { kind: "claude", args: ["--x"], model: null, models: ["opus", "sonnet"] },
+      },
+    };
+    const started = () => w.herdr.calls.filter(([m]) => m === "agent.start").map(([, p]) => [p.kind, p.args]);
+    const asked = () => String(w.herdr.calls.findLast(([m]) => m === "agent.prompt")?.[1].text);
+    await sendItem(w, side({ id: "c1", text: "codex:gpt-9 fix the build", trigger: true }));
+    expect(started().at(-1)).toEqual(["codex", ["--full-auto", "--model", "gpt-9"]]);
+    expect(asked()).toMatch(/What they asked:\nfix the build$/);
+    expect(w.store.state.spawned[0]).toMatchObject({ agent: "codex", model: "gpt-9" });
+    expect(w.aio.delivered.at(-1)?.message.text).toMatch(/codex gpt-9\)/);
+    await sendItem(w, side({ id: "c2", text: "Codex look again", trigger: true, chat: "g_2" }));
+    expect(started().at(-1)).toEqual(["codex", ["--full-auto"]]);
+    await sendItem(w, side({ id: "c3", text: "-m sonnet sum it up", trigger: true, chat: "g_3" }));
+    expect(started().at(-1)).toEqual(["claude", ["--x", "--model", "sonnet"]]);
+    expect(asked()).toMatch(/What they asked:\nsum it up$/);
+    // In a topic with an agent, a pick starts another one; the trigger alone talks to the newest.
+    await sendItem(w, side({ id: "c4", text: "claude:opus second opinion", topic: "c1", trigger: true }));
+    expect(started().at(-1)).toEqual(["claude", ["--x", "--model", "opus"]]);
+    expect(w.store.state.spawned).toHaveLength(4);
+    // A model the agent does not offer: nothing starts, the owner is told.
+    await sendItem(w, side({ id: "c5", text: "claude:haiku quick", trigger: true, chat: "g_5" }));
+    expect(w.store.state.spawned).toHaveLength(4);
+    expect(w.aio.delivered.at(-1)?.message.text).toBe("Cannot use the model haiku. Choose from: opus, sonnet");
+    // Words that only look like a pick are words.
+    await sendItem(w, side({ id: "c6", text: "note: codex is slow", trigger: true, chat: "g_6" }));
+    expect(started().at(-1)).toEqual(["claude", ["--x"]]);
+    expect(asked()).toMatch(/What they asked:\nnote: codex is slow$/);
+    // The codex agent's pane is gone: a resume wake carries its session on with the same agent and model.
+    const sp = w.store.state.spawned[0] as Spawned;
+    sp.session = "thread-1";
+    w.herdr.agents = w.herdr.agents.filter((a) => a.pane_id !== sp.paneId);
+    const base = inbound({ id: "wk", text: "[schedule t] carry on" });
+    await sendItem(w, {
+      ...base,
+      input: {
+        ...base.input,
+        channelContext: { schedule: "t", "schedule.wake": "resume", "schedule.declared": `spawn:${sp.id}` },
+      },
+      envelope: { ...base.envelope, channel: "schedule" },
+    });
+    expect(started().at(-1)).toEqual(["codex", ["resume", "thread-1", "--full-auto", "--model", "gpt-9"]]);
+  });
+
+  it("with follow: topic, what the owner says in the agent's topic reaches it without the trigger", async () => {
+    w.cfg.spawn[0] = { ...(w.cfg.spawn[0] as SpawnRule), follow: "topic" };
+    await sendItem(w, side({ id: "m1", text: "go", topic: "m0", trigger: true }));
+    await sendItem(w, side({ id: "m2", text: "and more", topic: "m0" }));
+    expect(w.herdr.actions.at(-1)).toEqual([
+      "agent.prompt",
+      { target: w.store.state.spawned[0]?.paneId, text: "and more" },
     ]);
   });
 
@@ -1261,7 +1323,7 @@ describe("agents started from a message (spawn)", () => {
     });
     // The owner's next words in that new topic reach the same agent.
     const n = w.herdr.actions.length;
-    await sendItem(w, side({ id: "q2", text: "and then?", topic: "q1" }));
+    await sendItem(w, side({ id: "q2", text: "and then?", topic: "q1", trigger: true }));
     expect(w.herdr.actions.slice(n)).toEqual([["agent.prompt", { target: sp?.paneId, text: "and then?" }]]);
   });
 
@@ -1310,18 +1372,18 @@ describe("agents started from a message (spawn)", () => {
 
   it("two agents in a topic: announced, named in their messages, /agents lists them, /close <name> and /close all", async () => {
     await sendItem(w, side({ id: "m1", text: "first", topic: "m0", trigger: true }));
-    await sendItem(w, side({ id: "m2", text: "second", topic: "m0", trigger: true }));
+    await sendItem(w, side({ id: "m2", text: "--new second", topic: "m0", trigger: true }));
     const [a, b] = w.store.state.spawned;
     const la = `ai-${a?.id.slice(0, 4)}`;
     const lb = `ai-${b?.id.slice(0, 4)}`;
     const texts = () => w.aio.delivered.map((d) => d.message.text);
     expect(texts()).toContainEqual(
-      `This topic now has 2 agents: ${la}, ${lb}. What you say goes to the newest, ${lb}; \`/agents\` lists them, \`/close <name>\` closes one, \`/close all\` closes all.`,
+      `This topic now has 2 agents: ${la}, ${lb}. What you say to an agent goes to the newest, ${lb}; \`/agents\` lists them, \`/close <name>\` closes one, \`/close all\` closes all.`,
     );
     // The second agent's progress message carries its name while the topic is shared.
     expect(texts().some((t) => t.startsWith(`【${lb}】⏳ On it`))).toBe(true);
     await sendItem(w, side({ id: "m3", text: "/agents", topic: "m0" }));
-    expect(texts().at(-1)).toBe(`Agents in this topic: ${la}, ${lb} (newest: what you say goes to it)`);
+    expect(texts().at(-1)).toBe(`Agents in this topic: ${la}, ${lb} (newest: what you say to an agent goes to it)`);
     await sendItem(w, side({ id: "m4", text: `/close ${la}`, topic: "m0" }));
     expect(w.store.state.spawned.map((x) => x.closedAt !== null)).toEqual([true, false]);
     expect(texts().at(-1)).toBe(`Closed ${la}. Still running: ${lb}.`);
@@ -1335,7 +1397,7 @@ describe("agents started from a message (spawn)", () => {
 
   it("/close all closes every agent of the topic", async () => {
     await sendItem(w, side({ id: "m1", text: "a", topic: "m0", trigger: true }));
-    await sendItem(w, side({ id: "m2", text: "b", topic: "m0", trigger: true }));
+    await sendItem(w, side({ id: "m2", text: "--new b", topic: "m0", trigger: true }));
     await sendItem(w, side({ id: "m3", text: "/close all", topic: "m0" }));
     expect(w.store.state.spawned.every((x) => x.closedAt !== null)).toBe(true);
     expect(w.aio.delivered.at(-1)?.message.text).toMatch(/^Closed ai-\w{4}, ai-\w{4}\.$/);
@@ -1349,10 +1411,10 @@ describe("agents started from a message (spawn)", () => {
     await run(w, 2);
     expect(w.aio.delivered.at(-1)?.message.text).toMatch(/waiting for a choice[\s\S]*1\. Yes/);
     await sendItem(w, side({ id: "m2", text: "1" }));
-    // Not in a topic: a reply to the agent's message reaches it; a bare message in the chat is not for it.
+    // Not in a topic: a reply to the agent's message (with the trigger) reaches it; a bare message in the chat is not for it.
     expect(w.herdr.actions.at(-1)?.[0]).not.toBe("agent.send_keys");
     const asked = w.store.state.spawned[0]?.sent.at(-1) ?? "";
-    const reply = side({ id: "m3", text: "1" });
+    const reply = side({ id: "m3", text: "1", trigger: true });
     reply.envelope.content = [
       { type: "quote", text: "", fromMessageId: asked },
       { type: "text", text: "1" },
@@ -1380,8 +1442,10 @@ describe("agents started from a message (spawn)", () => {
     const typed = w.herdr.actions.length;
     await sendItem(w, dm("d3", "buy milk"));
     expect(w.herdr.actions).toHaveLength(typed);
-    // In the topic the trigger opened, it is.
-    await sendItem(w, dm("d4", "only the morning", "d2"));
+    // In the topic the trigger opened, only with the trigger.
+    await sendItem(w, dm("d4a", "note: ask about lunch", "d2"));
+    expect(w.herdr.actions).toHaveLength(typed);
+    await sendItem(w, dm("d4", "/go only the morning", "d2"));
     expect(w.store.state.spawned).toHaveLength(1);
     expect(w.herdr.actions.at(-1)).toEqual([
       "agent.prompt",
@@ -1400,7 +1464,7 @@ describe("agents started from a message (spawn)", () => {
       ["agent.send_keys", ["enter"]],
     ]);
     expect(w.logs.some((l) => /prompt was not submitted; pressed enter/.test(l))).toBe(true);
-    await sendItem(w, side({ id: "m2", text: "and more", topic: "m1" }));
+    await sendItem(w, side({ id: "m2", text: "and more", topic: "m1", trigger: true }));
     expect(w.herdr.actions.at(-1)?.[0]).toBe("agent.prompt");
   });
 

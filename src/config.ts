@@ -95,7 +95,34 @@ export interface SpawnRule {
    * messages starting with this word start an agent (it is taken off); null: every addressed one does.
    */
   trigger: string | null;
+  /**
+   * The agents the owner may pick at the start of their words (`codex …`, `codex:gpt-x …`,
+   * `-m opus …`), by name: the rule's own `kind` (with its `args`) is always there, under its
+   * kind; `claude` and `codex` are there unless named otherwise.
+   */
+  agents: Record<string, SpawnAgent>;
+  /**
+   * Which of the owner's later messages a running agent gets: `trigger` (only those that use the
+   * trigger again, so the topic stays free for talking to other people), or `topic` (everything
+   * the owner says in the agent's topic or in reply to it).
+   */
+  follow: "trigger" | "topic";
 }
+
+/** One agent the owner may pick. */
+export interface SpawnAgent {
+  /** herdr agent kind. */
+  kind: string;
+  /** Arguments after the agent's executable. */
+  args: string[];
+  /** The model when the owner names none; null: the harness's own default. */
+  model: string | null;
+  /** The models the owner may name; null: any (a plain model name). */
+  models: string[] | null;
+}
+
+/** A model name as it may be written in a message and put on a command line. */
+export const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,79}$/;
 
 export interface Paths {
   configFile: string;
@@ -224,13 +251,49 @@ function spawnRule(r: Raw, where: string, path: (p: string) => string): SpawnRul
   }
   const id = str(r.id, `${where}.id`) ?? "ai";
   if (!/^[a-z0-9-]{1,24}$/.test(id)) throw new ConfigError(`${where}.id: lowercase letters, digits and -`);
+  const kind = str(r.kind, `${where}.kind`) ?? "claude";
+  const args = list("args");
+  const model = (v: unknown, at: string) => {
+    const m = str(v, at);
+    if (m && !MODEL_NAME.test(m)) throw new ConfigError(`${at}: not a model name`);
+    return m || null;
+  };
+  const agents: Record<string, SpawnAgent> = {};
+  for (const [name, v] of Object.entries(obj(r.agents, `${where}.agents`))) {
+    const at = `${where}.agents.${name}`;
+    if (!/^[a-z0-9-]{1,24}$/.test(name)) throw new ConfigError(`${at}: lowercase letters, digits and -`);
+    const a = obj(v, at);
+    const al = a.args;
+    if (al !== undefined && al !== null && (!Array.isArray(al) || al.some((x) => typeof x !== "string")))
+      throw new ConfigError(`${at}.args must be a list of strings`);
+    const ml = a.models;
+    if (
+      ml !== undefined &&
+      ml !== null &&
+      (!Array.isArray(ml) || ml.some((x) => typeof x !== "string" || !MODEL_NAME.test(x)))
+    )
+      throw new ConfigError(`${at}.models must be a list of model names`);
+    const k = str(a.kind, `${at}.kind`) ?? name;
+    agents[name] = {
+      kind: k,
+      args: (al as string[] | null | undefined) ?? (k === kind ? args : []),
+      model: model(a.model, `${at}.model`),
+      models: (ml as string[] | null | undefined) ?? null,
+    };
+  }
+  for (const k of [kind, "claude", "codex"])
+    agents[k] ??= { kind: k, args: k === kind ? args : [], model: null, models: null };
+  const follow = str(r.follow, `${where}.follow`) ?? "trigger";
+  if (follow !== "trigger" && follow !== "topic") throw new ConfigError(`${where}.follow: "trigger" or "topic"`);
   return {
     id,
     channel: need("channel"),
     account: need("account"),
     owner: need("owner"),
-    kind: str(r.kind, `${where}.kind`) ?? "claude",
-    args: list("args"),
+    kind,
+    args,
+    agents,
+    follow,
     cwd: path(str(r.cwd, `${where}.cwd`) ?? "~/.local/share/agents-io-herdr/agents"),
     dirPerAgent: bool(r.dirPerAgent, `${where}.dirPerAgent`, true),
     env,
