@@ -71,11 +71,22 @@ This comes from the transcript the agent writes itself (Claude Code: `~/.claude/
 - runs the rule's `before` hooks there, in order (a command line or a list; `timeoutSec`, default 60; `required: true` stops the start when it fails, otherwise a failure is only logged), with the rule's `env` and `HERDR_SPAWN_RULE`, `_ID`, `_DIR`, `_CHANNEL`, `_ACCOUNT`, `_CONVERSATION`, `_TOPIC`, `_MESSAGE`;
 - starts the agent (`kind`, `args`; when the new shell loses the command, say to an update question at its startup, once more in a new tab; a tab whose agent did not start is closed and the failure says what the shell showed) and gives it the rule's `preamble`, where it was called (conversation, topic, message ids), the quoted message and the owner's words;
 - answers in a topic under the trigger (the topic it is in, else a new one rooted at it): a progress message, edited while it works where the daemon can (`deliver.update`), settled with the answer;
-- types what the owner says next in the same topic (or in reply to one of the agent's messages) into the same agent; while it waits on a dialog, a bare number or `esc` picks.
+- types what the owner says to it later into the same agent: the trigger again in the agent's topic (or in reply to one of its messages); while it waits on a dialog, the trigger with a number or `esc` picks. Anything else the owner writes there is left alone (they may be talking to other people), except `/agents` and `/close`. With `follow: "topic"` everything the owner says in the topic reaches the agent, without the trigger.
+
+The words may start with a pick (it is taken off before the agent sees them):
+
+| Written after the trigger | Starts |
+|---|---|
+| `codex fix the build` | the agent named `codex` |
+| `codex:gpt-x fix the build` | that agent with the model `gpt-x` (`--model gpt-x`) |
+| `:opus …`, `-m opus …`, `--model opus …` | the rule's own agent with that model |
+| `--new …` | a new agent, also where one runs already |
+
+In a topic that has an agent, the trigger alone is more words for that agent; a pick or `--new` starts another one there. The agents that can be named are the rule's `agents` (name → `kind`, default the name; `args`; `model`, used when none is written; `models`, the ones that may be written, default any model name); the rule's own `kind` with its `args`, `claude` and `codex` are always there. A resumed wake keeps the agent and model (Claude Code `--resume <id>`, Codex `resume <id>`). The rule's `mcp` servers are written for Claude Code only (`.mcp.json`).
 
 An agent can schedule itself through the daemon's external MCP endpoint (`mcp` with `declare: true`, a client allowed `schedule:` routes): `schedule_add` with action `wake` comes back here at its time; mode `resume` wakes the same agent (in its pane, or a new tab resuming its harness session if the pane is gone), `fresh` starts a new one on the same place.
 
-A topic can have more than one agent (another trigger there, a `fresh` wake): the bridge says so in the topic, each agent's messages then start with its name (`【ai-1a2b】`), and what the owner says goes to the newest. `/agents` lists them; `/close <name>` closes one, `/close all` all of them, a bare `/close` the newest.
+A topic can have more than one agent (a pick or `--new` there, a `fresh` wake): the bridge says so in the topic, each agent's messages then start with its name (`【ai-1a2b】`), and what the owner says goes to the newest. `/agents` lists them; `/close <name>` closes one, `/close all` all of them, a bare `/close` the newest.
 
 Only the rule's `owner` (platform-signed) is listened to. Spawned panes get no notices or live cards in the workbench; they answer where they were called.
 
@@ -206,7 +217,7 @@ starts so it never runs twice, output redacted before it leaves. Without that fi
 | `channels` | — | More agents-io channel entries for the project's daemon, as written |
 | `secrets` | — | `NAME: "keychain:…" \| "env:…"`: set in the daemon's environment, for the `env:NAME` values of `channels` |
 | `externalMcp` | — | The daemon's external MCP endpoint (agents-io `externalMcp`: `listen`, `clients` with `tokenFile` and `scopes`), as written |
-| `spawn` | — | Rules that start an agent from a message (above): `channel`, `account`, `owner` (required); `kind` (`claude`), `args`, `cwd`, `env`, `skills`, `preamble`, `before`, `mcp` (name → `{ url, token: "env:…" | "keychain:…" }`, written to the agent's `.mcp.json`), `trigger`, `dirPerAgent`, `workspace` (`ai`), `id` (`ai`) |
+| `spawn` | — | Rules that start an agent from a message (above): `channel`, `account`, `owner` (required); `kind` (`claude`), `args`, `cwd`, `env`, `skills`, `preamble`, `before`, `mcp` (name → `{ url, token: "env:…" | "keychain:…" }`, written to the agent's `.mcp.json`), `trigger`, `agents` (name → `{ kind, args, model, models }`), `follow` (`trigger`; or `topic`), `dirPerAgent`, `workspace` (`ai`), `id` (`ai`) |
 | `workbench.create` | true | Create the workbench group at setup |
 | `workbench.name` | `<machine> terminal` / `<machine> 终端` | Its name |
 | `dataDir` | `~/.local/share/agents-io-herdr` (or `$AGENTS_IO_HERDR_DATA`) | State and the daemon's data |

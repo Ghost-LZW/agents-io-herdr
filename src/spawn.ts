@@ -21,7 +21,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
-import type { SpawnHook, SpawnRule } from "./config.ts";
+import { MODEL_NAME, type SpawnAgent, type SpawnHook, type SpawnRule } from "./config.ts";
 import type { ContentBlock, InboundEnvelope, InboundItem, ReplyRoute } from "./protocol.ts";
 
 /** One spawned agent: where it came from and how to answer there. */
@@ -48,6 +48,9 @@ export interface Spawned {
   turnAt: number | null;
   /** herdr saw the agent work (or ask) since `turnAt`. */
   sawWork: boolean;
+  /** The agent the owner picked (a name in the rule's `agents`) and its model; absent: the rule's own kind, the harness's default. */
+  agent?: string;
+  model?: string;
   /** The harness's own session id (herdr `agent_session`), to resume it after its pane is gone. */
   session?: string;
   /** The owner's messages this turn answers (marked working; done when the answer goes out). */
@@ -281,6 +284,87 @@ export function spawnedRoute(s: Spawned, replyTo?: string): ReplyRoute {
     conversationId: s.conversationId,
     ...(s.topic ? { threadId: s.topic, replyToMessageId: s.topic } : { replyToMessageId: replyTo ?? s.startMessageId }),
   };
+}
+
+/** What the owner picked at the start of their words. */
+export interface Choice {
+  /** A name in the rule's `agents`; null: not said. */
+  agent: string | null;
+  /** null: not said. */
+  model: string | null;
+  /** `--new`: a new agent, also where one runs already. */
+  fresh: boolean;
+  /** A model that cannot be used (not a model name, or not one of the agent's `models`). */
+  bad: string | null;
+}
+
+/**
+ * The owner's pick at the start of their words, and the words without it: an agent by name
+ * (`codex …`), with a model (`codex:gpt-x …`), a model alone (`:opus …`, `-m opus …`,
+ * `--model opus …`), and `--new`, after any @-mentions in front. Anything else is the words themselves.
+ */
+export function choiceOf(rule: SpawnRule, words: string): { choice: Choice; rest: string } {
+  const choice: Choice = { agent: null, model: null, fresh: false, bad: null };
+  // @-mentions the message opens with stay in front of the words ("@Ann codex look at this").
+  const lead = /^\s*(?:@\S+\s+)*/.exec(words)?.[0] ?? "";
+  let rest = words.slice(lead.length);
+  const take = () => {
+    const m = /^(\S+)(?:\s+|$)/.exec(rest);
+    return m ? { tok: m[1] as string, after: rest.slice(m[0].length) } : null;
+  };
+  for (let n = 0; n < 6; n++) {
+    const t = take();
+    if (!t) break;
+    const named = /^([A-Za-z0-9-]*):(\S+)$/.exec(t.tok);
+    const flag = /^--model=(\S+)$/.exec(t.tok);
+    const name = (named ? named[1] : t.tok)?.toLowerCase() ?? "";
+    if (t.tok === "--new") choice.fresh = true;
+    else if (t.tok === "-m" || t.tok === "--model") {
+      const v = /^(\S+)(?:\s+|$)/.exec(t.after);
+      if (!v) break;
+      choice.model = v[1] as string;
+      rest = t.after.slice(v[0].length);
+      continue;
+    } else if (flag) choice.model = flag[1] as string;
+    else if (choice.agent === null && (named ? name === "" || name in rule.agents : name in rule.agents)) {
+      if (name) choice.agent = name;
+      if (named) choice.model = named[2] as string;
+    } else break;
+    rest = t.after;
+  }
+  if (choice.model !== null) {
+    const allowed = agentOf(rule, choice.agent).models;
+    if (!MODEL_NAME.test(choice.model) || (allowed && !allowed.includes(choice.model))) choice.bad = choice.model;
+  }
+  return { choice, rest: lead.trimStart() + rest };
+}
+
+/** The agent of a name (null or unknown: the rule's own kind). */
+export function agentOf(rule: SpawnRule, name: string | null | undefined): SpawnAgent {
+  return (
+    (name ? rule.agents[name] : undefined) ??
+    rule.agents[rule.kind] ?? { kind: rule.kind, args: rule.args, model: null, models: null }
+  );
+}
+
+/**
+ * The command line after the agent's executable: its arguments, the model, and the harness
+ * session to carry on (Claude Code `--resume <id>`, Codex `resume <id>`).
+ */
+export function agentArgs(a: SpawnAgent, model: string | null | undefined, resume?: string): string[] {
+  const m = model ?? a.model;
+  const args = [...a.args, ...(m ? ["--model", m] : [])];
+  if (!resume) return args;
+  return a.kind === "codex" ? ["resume", resume, ...args] : [...args, "--resume", resume];
+}
+
+/** The same message with other words (its first text block). */
+export function withWords(item: InboundItem, words: string): InboundItem {
+  const env = item.envelope;
+  const first = env.content.findIndex((c) => c.type === "text");
+  if (first < 0) return item;
+  const content = env.content.map((c, i) => (i === first ? { type: "text" as const, text: words } : c));
+  return { ...item, input: { ...item.input, content }, envelope: { ...env, content } };
 }
 
 /**

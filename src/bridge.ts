@@ -79,7 +79,11 @@ import { redact } from "./redact.ts";
 import { type DialogOption, optionsOf, summaryOf, tailOf } from "./screen.ts";
 import { lookup, realSecretSource, type SecretSource } from "./secrets.ts";
 import {
+  agentArgs,
   agentLabel,
+  agentOf,
+  type Choice,
+  choiceOf,
   firstPrompt,
   type HookRunner,
   hookEnv,
@@ -97,6 +101,7 @@ import {
   topicOf,
   triggered,
   wakeOf,
+  withWords,
   writeMcp,
 } from "./spawn.ts";
 import {
@@ -838,19 +843,37 @@ export class Bridge {
   // ---- agents started from a message (config `spawn`) ----------------------------------------
 
   async #onSpawnChannel(rule: SpawnRule, item: InboundItem): Promise<void> {
-    const env = item.envelope;
+    let env = item.envelope;
     const st = this.store.state;
-    // The trigger starts a new agent (also in a topic that has one: the owner asked for another).
+    // The trigger, with the owner's pick in front of the words (an agent, a model, `--new`).
     const t = triggered(rule, item);
-    if (t.start) {
-      await this.#mark(item, "working");
-      return this.#spawn(rule, t.item);
+    const picked = t.start ? choiceOf(rule, textOf(t.item.envelope.content)) : null;
+    const running = spawnedFor(st.spawned, item, repliedTo(item));
+    if (picked?.choice.bad) {
+      const models = agentOf(rule, picked.choice.agent).models;
+      await this.#mark(item, "failed");
+      await this.#deliver(`herdr:sp:${sha(item.channelRef).slice(0, 24)}:model`, this.#replyTo(item), {
+        text: this.#s.spawnBadModel(picked.choice.bad, models ?? []),
+      }).catch(() => undefined);
+      return;
     }
-    const target =
-      // Only the agent's topic, or a reply to one of its messages: in a direct chat (a chat with oneself
-      // too) the rest is the owner's own notes, not for any agent.
-      spawnedFor(st.spawned, item, repliedTo(item));
+    if (picked) {
+      const c = picked.choice;
+      // Where an agent runs already, the trigger alone is more words for it; a pick (or `--new`) asks for another.
+      if (!running || c.fresh || c.agent !== null || c.model !== null) {
+        await this.#mark(item, "working");
+        return this.#spawn(rule, withWords(t.item, picked.rest), c);
+      }
+      item = withWords(t.item, picked.rest);
+    } else if (rule.follow === "trigger") {
+      // Not said to the agent (the owner talking to other people in its topic): only the commands about it are taken.
+      const tc = running ? topicCommand(textOf(env.content)) : null;
+      if (running && tc) return this.#topicCommand(running, item, tc);
+      return;
+    }
+    const target = running;
     if (!target) return;
+    env = item.envelope;
     const text = laterPrompt(item, this.#blobDir());
     if (!text) return;
     const tc = topicCommand(textOf(env.content));
@@ -1017,7 +1040,7 @@ export class Bridge {
         const alive = sp.closedAt === null ? await this.#spawnedPane(sp) : null;
         if (!alive) {
           // Its pane is gone: the same harness session, carried on in a new tab.
-          const opened = await this.#openAgent(rule, item, sp.id, sp.session);
+          const opened = await this.#openAgent(rule, item, sp.id, sp.session, sp);
           Object.assign(sp, {
             paneId: opened.paneId,
             terminalId: opened.terminalId,
@@ -1035,7 +1058,7 @@ export class Bridge {
       }
       // fresh: a new agent on the same place, told what it is for.
       const id = newId();
-      const opened = await this.#openAgent(rule, item, id);
+      const opened = await this.#openAgent(rule, item, id, undefined, sp);
       await this.#submit({ id }, opened.paneId, `${rule.preamble.trim()}\n\n${prompt}`.trim());
       const { session: _resumed, ...place } = sp;
       this.store.state.spawned.push({
@@ -1125,7 +1148,9 @@ export class Bridge {
     item: InboundItem,
     id: string,
     resume?: string,
+    pick: { agent?: string | null; model?: string | null } = {},
   ): Promise<{ paneId: string; terminalId: string; tabId: string; label: string }> {
+    const agent = agentOf(rule, pick.agent);
     const dir = prepareDir(rule, id);
     const mcp = this.#mcpOf(rule);
     const env = { ...this.#envOf(rule), ...mcp.env, HERDR_SPAWN_ID: id };
@@ -1155,9 +1180,9 @@ export class Bridge {
       try {
         await startAgent(h, {
           name: `${rule.id}-${id}${resume || attempt > 1 ? `-r${newId().slice(0, 4)}` : ""}`,
-          kind: rule.kind,
+          kind: agent.kind,
           paneId,
-          args: [...rule.args, ...(resume ? ["--resume", resume] : [])],
+          args: agentArgs(agent, pick.model, resume),
           onDialog: startupAnswer,
           ...(this.#o.sleep ? { sleep: this.#o.sleep } : {}),
         });
@@ -1188,18 +1213,26 @@ export class Bridge {
     return out;
   }
 
-  async #spawn(rule: SpawnRule, item: InboundItem): Promise<void> {
+  /** Where a plain answer to a message goes: under it, in its topic when it is in one. */
+  #replyTo(item: InboundItem): ReplyRoute {
     const env = item.envelope;
-    const now = this.#now();
-    const id = newId();
-    const op = `herdr:sp:${sha(item.channelRef).slice(0, 24)}`;
-    const route: ReplyRoute = {
+    return {
       channel: env.channel,
       account: env.account,
       conversationId: env.conversation.id,
       ...(env.conversation.threadId ? { threadId: env.conversation.threadId } : {}),
       replyToMessageId: env.id,
     };
+  }
+
+  async #spawn(rule: SpawnRule, item: InboundItem, pick: Choice): Promise<void> {
+    const env = item.envelope;
+    const now = this.#now();
+    const id = newId();
+    const op = `herdr:sp:${sha(item.channelRef).slice(0, 24)}`;
+    const route = this.#replyTo(item);
+    const agent = agentOf(rule, pick.agent);
+    const model = pick.model ?? agent.model;
     if (this.paused) {
       await this.#deliver(`${op}:paused`, route, { text: this.#s.paused }).catch(() => undefined);
       return;
@@ -1209,7 +1242,7 @@ export class Bridge {
     let tabId: string | undefined;
     let label: string;
     try {
-      ({ paneId, terminalId, tabId, label } = await this.#openAgent(rule, item, id));
+      ({ paneId, terminalId, tabId, label } = await this.#openAgent(rule, item, id, undefined, pick));
       await this.#submit({ id }, paneId, firstPrompt(rule, item, now, this.#blobDir(), await this.#historyOf(item)));
     } catch (e) {
       const why = e instanceof HerdrError ? `${e.code}: ${e.message}` : (e as Error).message;
@@ -1224,6 +1257,8 @@ export class Bridge {
       paneId,
       terminalId,
       ...(tabId ? { tabId } : {}),
+      ...(pick.agent ? { agent: pick.agent } : {}),
+      ...(pick.model ? { model: pick.model } : {}),
       channel: env.channel,
       account: env.account,
       conversationId: env.conversation.id,
@@ -1243,10 +1278,15 @@ export class Bridge {
     };
     this.store.state.spawned.push(sp);
     this.store.save();
-    this.#log(`spawn ${rule.id}: agent ${id} in ${paneId}`);
+    this.#log(`spawn ${rule.id}: agent ${id} in ${paneId} (${agent.kind}${model ? ` ${model}` : ""})`);
     await this.pushBindings();
     await this.#announceShared(sp);
-    await this.#spawnProgress(sp, this.#s.spawnStarted(`herdr ${rule.workspace}/${label} (${paneId})`), false, env.id);
+    await this.#spawnProgress(
+      sp,
+      this.#s.spawnStarted(`herdr ${rule.workspace}/${label} (${paneId}; ${agent.kind}${model ? ` ${model}` : ""})`),
+      false,
+      env.id,
+    );
   }
 
   /** A message from the agent into its place; remembered so a reply to it reaches the agent. */
@@ -1317,7 +1357,12 @@ export class Bridge {
     }
     await this.#spawnSay(
       sp,
-      { text: this.#s.spawnChoice(fence(redact(screen).text).slice(1)) },
+      {
+        text: this.#s.spawnChoice(
+          fence(redact(screen).text).slice(1),
+          this.#c.spawn.find((r) => r.id === sp.rule)?.follow !== "topic",
+        ),
+      },
       `herdr:sp:${sp.id}:ask:${sha(screen).slice(0, 12)}`,
       replyTo,
     );

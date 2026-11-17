@@ -71,11 +71,22 @@ bridge 只通过 agents-io 的宿主协议（unix socket 上的 JSONL）和自�
 - 在那里依次运行规则的 `before` 钩子（一行命令或一个列表；`timeoutSec` 默认 60；`required: true` 时失败就不开 agent，否则只记日志），环境变量是规则的 `env`，外加 `HERDR_SPAWN_RULE`、`_ID`、`_DIR`、`_CHANNEL`、`_ACCOUNT`、`_CONVERSATION`、`_TOPIC`、`_MESSAGE`；
 - 启动 agent（`kind`、`args`；新 shell 把命令吃掉时——比如它启动时问要不要更新——换个新 tab 再试一次；没起来的 tab 会关掉，失败消息里带上 shell 显示的内容），告诉它规则的 `preamble`、在哪被叫的（会话、话题、消息 id）、引用的消息和主人的话；
 - 在触发消息下的话题里回答（它本来在话题里就用那个话题，否则以它为根开一个新话题）：先发一条进度消息，守护进程能改已发消息（`deliver.update`）时边做边改，最后改成回答；
-- 主人之后在同一个话题里（或回复 agent 的消息）说的话，交给同一个 agent；它在等选择时，回一个数字或 `esc` 就是选。
+- 主人之后对它说的话交给同一个 agent：在它的话题里（或回复它的消息）再用一次触发词；它在等选择时，触发词带一个数字或 `esc` 就是选。主人在那里写的其他话不处理（可能是在和别人说话），只认 `/agents` 和 `/close`。规则写 `follow: "topic"` 时，主人在话题里说的每句话都交给 agent，不用触发词。
+
+话的开头可以带选择（交给 agent 前去掉）：
+
+| 触发词后面写 | 启动的是 |
+|---|---|
+| `codex 修一下构建` | 名叫 `codex` 的 agent |
+| `codex:gpt-x 修一下构建` | 这个 agent，模型用 `gpt-x`（`--model gpt-x`） |
+| `:opus …`、`-m opus …`、`--model opus …` | 规则自己的 agent，用这个模型 |
+| `--new …` | 新开一个 agent，哪怕这里已经有一个 |
+
+话题里已经有 agent 时，只写触发词是接着对它说；带了选择或 `--new` 就在这里再开一个。能叫名字的 agent 是规则的 `agents`（名字 → `kind`，默认同名；`args`；`model`，没写模型时用它；`models`，允许写的模型，默认任何模型名）；规则自己的 `kind`（带它的 `args`）、`claude` 和 `codex` 总是可选。`resume` 叫醒时沿用原来的 agent 和模型（Claude Code 用 `--resume <id>`，Codex 用 `resume <id>`）。规则的 `mcp` 服务器只为 Claude Code 写（`.mcp.json`）。
 
 agent 可以通过守护进程的对外 MCP 端点给自己设定时（`mcp` 写 `declare: true`，客户端有 `schedule:` 权限）：`schedule_add` 的 action 为 `wake` 时，到点交回这里；mode `resume` 叫醒同一个 agent（还在它的窗格里；窗格关了就在新 tab 里恢复它的 harness 会话），`fresh` 在同一个地方新开一个 agent。
 
-一个话题里可以有不止一个 agent（在那里再叫一次、`fresh` 叫醒）：bridge 会在话题里说明，之后每个 agent 的消息都以它的名字开头（`【ai-1a2b】`），主人说的话发给最新的那个。`/agents` 列出它们；`/close <名字>` 关一个，`/close all` 全关，只发 `/close` 关最新的。
+一个话题里可以有不止一个 agent（在那里带选择或 `--new` 再叫一次、`fresh` 叫醒）：bridge 会在话题里说明，之后每个 agent 的消息都以它的名字开头（`【ai-1a2b】`），对 agent 说的话发给最新的那个。`/agents` 列出它们；`/close <名字>` 关一个，`/close all` 全关，只发 `/close` 关最新的。
 
 只听规则里的 `owner`（平台签名的身份）。这些窗格不在工作台发通知和实时卡片，只在被叫的地方回答。
 
@@ -203,7 +214,7 @@ agents-io-herdr setup --wait
 | `channels` | — | 给项目守护进程加的 agents-io 通道条目，原样写入 |
 | `secrets` | — | `名字: "keychain:…" \| "env:…"`：放进守护进程的环境变量，给 `channels` 里的 `env:名字` 用 |
 | `externalMcp` | — | 守护进程的对外 MCP 端点（agents-io 的 `externalMcp`：`listen`、带 `tokenFile` 和 `scopes` 的 `clients`），原样写入 |
-| `spawn` | — | 从消息启动 agent 的规则（见上）：`channel`、`account`、`owner` 必填；`kind`（`claude`）、`args`、`cwd`、`env`、`skills`、`preamble`、`before`、`mcp`（名字 → `{ url, token: "env:…" | "keychain:…" }`，写进 agent 的 `.mcp.json`）、`trigger`、`dirPerAgent`、`workspace`（`ai`）、`id`（`ai`） |
+| `spawn` | — | 从消息启动 agent 的规则（见上）：`channel`、`account`、`owner` 必填；`kind`（`claude`）、`args`、`cwd`、`env`、`skills`、`preamble`、`before`、`mcp`（名字 → `{ url, token: "env:…" | "keychain:…" }`，写进 agent 的 `.mcp.json`）、`trigger`、`agents`（名字 → `{ kind, args, model, models }`）、`follow`（`trigger`；或 `topic`）、`dirPerAgent`、`workspace`（`ai`）、`id`（`ai`） |
 | `workbench.create` | true | 绑定主人时自动建工作台群 |
 | `workbench.name` | `<machine> 终端` / `<machine> terminal` | 群名 |
 | `dataDir` | `~/.local/share/agents-io-herdr`（或 `$AGENTS_IO_HERDR_DATA`） | 状态和守护进程的数据 |
