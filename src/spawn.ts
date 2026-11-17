@@ -301,11 +301,13 @@ export interface Choice {
 /**
  * The owner's pick at the start of their words, and the words without it: an agent by name
  * (`codex …`), with a model (`codex:gpt-x …`), a model alone (`:opus …`, `-m opus …`,
- * `--model opus …`), and `--new`. Anything else is the words themselves.
+ * `--model opus …`), and `--new`, after any @-mentions in front. Anything else is the words themselves.
  */
 export function choiceOf(rule: SpawnRule, words: string): { choice: Choice; rest: string } {
   const choice: Choice = { agent: null, model: null, fresh: false, bad: null };
-  let rest = words.trimStart();
+  // @-mentions the message opens with stay in front of the words ("@Ann codex look at this").
+  const lead = /^\s*(?:@\S+\s+)*/.exec(words)?.[0] ?? "";
+  let rest = words.slice(lead.length);
   const take = () => {
     const m = /^(\S+)(?:\s+|$)/.exec(rest);
     return m ? { tok: m[1] as string, after: rest.slice(m[0].length) } : null;
@@ -334,7 +336,7 @@ export function choiceOf(rule: SpawnRule, words: string): { choice: Choice; rest
     const allowed = agentOf(rule, choice.agent).models;
     if (!MODEL_NAME.test(choice.model) || (allowed && !allowed.includes(choice.model))) choice.bad = choice.model;
   }
-  return { choice, rest };
+  return { choice, rest: lead.trimStart() + rest };
 }
 
 /** The agent of a name (null or unknown: the rule's own kind). */

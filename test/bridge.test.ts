@@ -1182,8 +1182,9 @@ describe("agents started from a message (spawn)", () => {
     expect(asked()).toMatch(/What they asked:\nfix the build$/);
     expect(w.store.state.spawned[0]).toMatchObject({ agent: "codex", model: "gpt-9" });
     expect(w.aio.delivered.at(-1)?.message.text).toMatch(/codex gpt-9\)/);
-    await sendItem(w, side({ id: "c2", text: "Codex look again", trigger: true, chat: "g_2" }));
+    await sendItem(w, side({ id: "c2", text: "@Ann Codex look again", trigger: true, chat: "g_2" }));
     expect(started().at(-1)).toEqual(["codex", ["--full-auto"]]);
+    expect(asked()).toMatch(/What they asked:\n@Ann look again$/);
     await sendItem(w, side({ id: "c3", text: "-m sonnet sum it up", trigger: true, chat: "g_3" }));
     expect(started().at(-1)).toEqual(["claude", ["--x", "--model", "sonnet"]]);
     expect(asked()).toMatch(/What they asked:\nsum it up$/);
